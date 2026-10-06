@@ -1,0 +1,735 @@
+import React, { useState, useEffect } from "react";
+import {
+  Bell,
+  X,
+  CheckCheck,
+  Trash2,
+  Search,
+  ChevronLeft,
+  ShoppingBag,
+  AlertTriangle,
+  ArrowRight,
+  Sparkles,
+  Settings,
+} from "lucide-react";
+import { useData } from "../context/DataContext";
+import { NotificationItem } from "../types";
+
+interface NotificationCenterModalProps {
+  onNavigateTab?: (tab: string, subCategory?: string, isExplicit?: boolean) => void;
+}
+
+export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = ({
+  onNavigateTab,
+}) => {
+  const {
+    currentUser,
+    notifications,
+    marketplaceMode,
+    isNotificationCenterOpen,
+    isMessengerInboxOpen,
+    closeNotificationCenter,
+    markNotificationRead,
+    markAllNotificationsRead,
+    clearAllNotifications,
+    deleteNotification,
+    openMessengerInbox,
+    playAppSound,
+  } = useData();
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFilter, setActiveFilter] = useState<
+    "all" | "unread" | "orders" | "updates"
+  >("all");
+  const [selectedNotification, setSelectedNotification] =
+    useState<NotificationItem | null>(null);
+  const [isNotifSettingsOpen, setIsNotifSettingsOpen] = useState(false);
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState<'all' | string | null>(null);
+  const [notifSettings, setNotifSettings] = useState({
+    orderUpdates: true,
+    messageAlerts: true,
+    soundAlerts: true,
+    courseAlerts: true,
+    promoAlerts: false,
+  });
+
+  useEffect(() => {
+    if (isNotificationCenterOpen) {
+      setSearchQuery("");
+      setSelectedNotification(null);
+      setActiveFilter("all");
+      setIsNotifSettingsOpen(false);
+      setDeleteConfirmTarget(null);
+    }
+  }, [isNotificationCenterOpen]);
+
+  if (!isNotificationCenterOpen || isMessengerInboxOpen) return null;
+
+  const isSeller = marketplaceMode === 'selling';
+
+  // Role-scoped notifications (Strict privacy: user only sees their own notifications, never default/foreign alerts)
+  const scopedNotifications = notifications.filter(n => {
+    if (!currentUser) {
+      return n.recipientId === 'all' || n.recipientRole === 'all';
+    }
+
+    // Admin sees all system notifications
+    if (currentUser.role === 'admin') return true;
+
+    // Normal users never see admin/staff alerts
+    if (n.recipientRole === 'admin' || n.targetTab === 'admin') return false;
+
+    // Direct recipient targeting
+    if (n.recipientId && n.recipientId !== 'all') {
+      return n.recipientId === currentUser.id;
+    }
+    if (n.recipientEmail && n.recipientEmail !== 'all') {
+      return Boolean(currentUser.email && n.recipientEmail.toLowerCase() === currentUser.email.toLowerCase());
+    }
+
+    // Role-based broadcast
+    if (n.recipientRole) {
+      if (n.recipientRole === 'all') return true;
+      if (isSeller) return n.recipientRole === 'seller';
+      return n.recipientRole === 'buyer' || n.recipientRole === 'customer' || n.recipientRole === 'student';
+    }
+
+    // Explicit mode check
+    if (n.mode === 'selling') return isSeller;
+    if (n.mode === 'buying') return !isSeller;
+
+    // Do not show orphan notifications without recipientId or role to normal users
+    return false;
+  });
+
+  const unreadCount = scopedNotifications.filter((n) => !n.read).length;
+
+  // Filter & Sort Notifications
+  const filteredNotifications = scopedNotifications
+    .filter((n) => {
+      const matchesSearch =
+        n.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        n.message.toLowerCase().includes(searchQuery.toLowerCase());
+      if (!matchesSearch) return false;
+      if (activeFilter === "unread") return !n.read;
+      if (activeFilter === "orders")
+        return (
+          n.type === "success" ||
+          n.category === "payout" ||
+          n.targetTab === "marketplace"
+        );
+      if (activeFilter === "updates")
+        return (
+          n.type === "info" ||
+          n.type === "warning" ||
+          n.category === "system"
+        );
+      return true;
+    })
+    .sort((a, b) => {
+      if (!a.read && b.read) return -1;
+      if (a.read && !b.read) return 1;
+      return 0;
+    });
+
+  const handleActionClick = (notif: NotificationItem) => {
+    markNotificationRead(notif.id);
+    playAppSound("notification");
+    closeNotificationCenter();
+
+    const notifTitle = (notif.title || "").toLowerCase();
+    const notifMsg = (notif.message || "").toLowerCase();
+
+    if (
+      notif.targetTab === "messenger" ||
+      notif.category === "message" ||
+      notif.targetId?.startsWith("chat-")
+    ) {
+      openMessengerInbox(notif.targetId);
+      return;
+    }
+
+    if (
+      notif.targetTab === "courses" ||
+      notifTitle.includes("কোর্স") ||
+      notifTitle.includes("মডিউল") ||
+      notifMsg.includes("মডিউল")
+    ) {
+      if (onNavigateTab) onNavigateTab("courses", undefined, true);
+      return;
+    }
+
+    if (
+      notif.targetTab === "student-dashboard" ||
+      notifTitle.includes("অ্যাসাইনমেন্ট") ||
+      notifTitle.includes("assignment") ||
+      notifMsg.includes("অ্যাসাইনমেন্ট")
+    ) {
+      if (onNavigateTab) onNavigateTab("student-dashboard", "my-courses", true);
+      return;
+    }
+
+    if (isSeller) {
+      if (
+        notif.targetTab === "financials" ||
+        notif.category === "payout" ||
+        notifTitle.includes("ওয়ালেট") ||
+        notifTitle.includes("পেমেন্ট") ||
+        notifTitle.includes("বোনাস") ||
+        notifTitle.includes("ক্যাশআউট")
+      ) {
+        if (onNavigateTab) onNavigateTab("marketplace", "seller-payout", true);
+        return;
+      }
+
+      if (
+        notif.targetTab === "marketplace" ||
+        notifTitle.includes("অর্ডার") ||
+        notifTitle.includes("ord-") ||
+        notifTitle.includes("এস্ক্রো") ||
+        notifTitle.includes("গিগ")
+      ) {
+        if (onNavigateTab) onNavigateTab("marketplace", "seller-orders", true);
+        return;
+      }
+    } else {
+      // BUYER MODE: STRICTLY KEEP IN BUYER MODE!
+      if (
+        notif.targetTab === "financials" ||
+        notifTitle.includes("বোনাস") ||
+        notifTitle.includes("ওয়ালেট")
+      ) {
+        if (onNavigateTab) onNavigateTab("financials", undefined, true);
+        return;
+      }
+
+      if (
+        notif.targetTab === "marketplace" ||
+        notifTitle.includes("অর্ডার") ||
+        notifTitle.includes("ord-") ||
+        notifTitle.includes("এস্ক্রো") ||
+        notifTitle.includes("গিগ")
+      ) {
+        if (onNavigateTab) onNavigateTab("marketplace", "my-orders", true);
+        return;
+      }
+    }
+
+    if (notif.targetTab && onNavigateTab) {
+      onNavigateTab(notif.targetTab, undefined, true);
+    }
+  };
+
+  const getNotifIcon = (notif: NotificationItem) => {
+    if (notif.senderAvatar) {
+      return (
+        <img
+          src={notif.senderAvatar}
+          alt={notif.title}
+          className="w-10 h-10 rounded-full object-cover border border-[#006A4E]/30 shrink-0"
+        />
+      );
+    }
+
+    if (
+      notif.type === "success" ||
+      notif.category === "payout" ||
+      notif.title.includes("৳")
+    ) {
+      return (
+        <div className="w-10 h-10 rounded-2xl bg-emerald-100 border border-emerald-200 flex items-center justify-center shrink-0 text-[#006A4E]">
+          <ShoppingBag className="w-5 h-5" />
+        </div>
+      );
+    }
+
+    if (notif.type === "warning") {
+      return (
+        <div className="w-10 h-10 rounded-2xl bg-amber-100 border border-amber-200 flex items-center justify-center shrink-0 text-amber-700">
+          <AlertTriangle className="w-5 h-5" />
+        </div>
+      );
+    }
+
+    return (
+      <div className="w-10 h-10 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0 text-[#006A4E]">
+        <Sparkles className="w-5 h-5" />
+      </div>
+    );
+  };
+
+  return (
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/50 backdrop-blur-xs p-0 sm:p-4 animate-in fade-in duration-200">
+      {/* PHONE VIEW (100% Full Screen Mobile & Centered Desktop Modal) */}
+      <div className="w-full h-[100dvh] sm:h-[650px] sm:max-w-lg sm:rounded-3xl bg-white text-slate-900 flex flex-col overflow-hidden shadow-2xl border-0 sm:border sm:border-slate-200 font-bengali">
+        {/* HEADER BAR & ATTACHED SUB-TAB BAR (MATCHES MENUBAR THEME EXACTLY) */}
+        <div className={`p-3.5 pb-0 sm:p-4 sm:pb-0 ${isSeller ? 'bg-[#E11D48]' : 'bg-[#006A4E]'} text-white border-b border-white/10 flex flex-col gap-2 shrink-0 shadow-xs`}>
+          <div className="flex items-center justify-between">
+            {selectedNotification ? (
+              <button
+                type="button"
+                onClick={() => setSelectedNotification(null)}
+                className="flex items-center gap-1.5 text-white/90 hover:text-white transition cursor-pointer active:scale-95 py-1 px-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20"
+              >
+                <ChevronLeft className="w-5 h-5 text-white stroke-[2.5]" />
+                <span className="text-xs sm:text-sm font-black">তালিকায় ফিরে যান</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={closeNotificationCenter}
+                  className="p-1.5 rounded-xl text-white/80 hover:text-white hover:bg-white/10 transition cursor-pointer active:scale-95"
+                  title="বন্ধ করুন"
+                >
+                  <ChevronLeft className="w-6 h-6 stroke-[2.5] text-white" />
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <div className="p-2 rounded-xl bg-white/15 border border-white/25 text-white">
+                    <Bell className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-1.5">
+                      <h2 className="text-sm sm:text-base font-black text-white tracking-tight leading-none flex items-center gap-1.5">
+                        <span>নোটিফিকেশন সেন্টার</span>
+                        <span className="w-2 h-2 rounded-full bg-white" />
+                        {notifications.length > 0 && (
+                          <span className="min-w-5 h-5 px-1.5 bg-white text-[#E11D48] text-[10px] font-black rounded-full flex items-center justify-center shrink-0 shadow-xs">
+                            {unreadCount > 0 ? unreadCount : notifications.length}
+                          </span>
+                        )}
+                      </h2>
+                    </div>
+                    <p className={`text-[10px] font-semibold ${isSeller ? 'text-rose-100' : 'text-emerald-100'} tracking-wide leading-tight mt-0.5 font-sans`}>
+                      PTENit Notifications & Updates
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsNotifSettingsOpen(true)}
+                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition cursor-pointer active:scale-95 border border-white/20"
+                title="নোটিফিকেশন সেটিংস"
+              >
+                <Settings className="w-5 h-5" />
+              </button>
+              <button
+                type="button"
+                onClick={closeNotificationCenter}
+                className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition cursor-pointer active:scale-95 border border-white/20"
+                title="বন্ধ করুন (X)"
+              >
+                <X className="w-5 h-5 stroke-[2.5]" />
+              </button>
+            </div>
+          </div>
+
+          {/* QUICK TOP ACTION BUTTONS */}
+          <div className="flex items-center justify-between pt-2 border-t border-white/15 text-xs text-white">
+            <button
+              type="button"
+              onClick={() => {
+                markAllNotificationsRead();
+                playAppSound("notification");
+              }}
+              disabled={unreadCount === 0}
+              className="text-white hover:underline disabled:opacity-40 font-bold flex items-center gap-1.5 cursor-pointer text-[11px] sm:text-xs"
+            >
+              <CheckCheck className="w-4 h-4" />
+              <span>সব পড়া চিহ্নিত করুন</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDeleteConfirmTarget('all')}
+              disabled={notifications.length === 0}
+              className="text-rose-200 hover:text-white hover:underline disabled:opacity-40 font-bold flex items-center gap-1.5 cursor-pointer text-[11px] sm:text-xs"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>সব মুছে ফেলুন</span>
+            </button>
+          </div>
+
+          {/* SUB-TAB BAR (NO CARDS, SIMPLE, SAME COLOR AS MENUBAR, UNDERLINE INDICATOR) */}
+          <div className="grid grid-cols-4 w-full border-t border-white/15 pt-1 mt-1 -mx-3.5 sm:-mx-4 px-1">
+            <button
+              type="button"
+              onClick={() => setActiveFilter("all")}
+              className={`relative py-2 px-1 text-[11.5px] font-bold transition flex items-center justify-center gap-1 cursor-pointer active:opacity-80 text-center ${
+                activeFilter === "all"
+                  ? "text-white font-black"
+                  : "text-white/70 hover:text-white font-medium"
+              }`}
+            >
+              <Bell className={`w-3.5 h-3.5 shrink-0 ${activeFilter === 'all' ? 'stroke-[2.4]' : 'stroke-[1.8]'}`} />
+              <span className="truncate">সকল ({notifications.length})</span>
+              {activeFilter === "all" && (
+                <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-white rounded-full" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveFilter("unread")}
+              className={`relative py-2 px-1 text-[11.5px] font-bold transition flex items-center justify-center gap-1 cursor-pointer active:opacity-80 text-center ${
+                activeFilter === "unread"
+                  ? "text-white font-black"
+                  : "text-white/70 hover:text-white font-medium"
+              }`}
+            >
+              <CheckCheck className={`w-3.5 h-3.5 shrink-0 ${activeFilter === 'unread' ? 'stroke-[2.4]' : 'stroke-[1.8]'}`} />
+              <span className="truncate">পড়া হয়নি ({unreadCount})</span>
+              {activeFilter === "unread" && (
+                <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-white rounded-full" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveFilter("orders")}
+              className={`relative py-2 px-1 text-[11.5px] font-bold transition flex items-center justify-center gap-1 cursor-pointer active:opacity-80 text-center ${
+                activeFilter === "orders"
+                  ? "text-white font-black"
+                  : "text-white/70 hover:text-white font-medium"
+              }`}
+            >
+              <ShoppingBag className={`w-3.5 h-3.5 shrink-0 ${activeFilter === 'orders' ? 'stroke-[2.4]' : 'stroke-[1.8]'}`} />
+              <span className="truncate">অর্ডার</span>
+              {activeFilter === "orders" && (
+                <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-white rounded-full" />
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveFilter("updates")}
+              className={`relative py-2 px-1 text-[11.5px] font-bold transition flex items-center justify-center gap-1 cursor-pointer active:opacity-80 text-center ${
+                activeFilter === "updates"
+                  ? "text-white font-black"
+                  : "text-white/70 hover:text-white font-medium"
+              }`}
+            >
+              <Sparkles className={`w-3.5 h-3.5 shrink-0 ${activeFilter === 'updates' ? 'stroke-[2.4]' : 'stroke-[1.8]'}`} />
+              <span className="truncate">আপডেট</span>
+              {activeFilter === "updates" && (
+                <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-white rounded-full" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* SEARCH BAR (CLEAN WHITE TEXT FIELD, BALANCED FOR PHONE VIEW) */}
+        <div className="p-3 bg-white border-b border-slate-200 shrink-0">
+          <div className="w-full max-w-md mx-auto">
+            <div className="relative flex items-center">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="নোটিফিকেশন বা বার্তা খুঁজুন..."
+                className={`w-full pl-10 pr-9 py-2 bg-slate-50 text-slate-900 placeholder-slate-400 font-medium text-xs sm:text-sm rounded-xl shadow-xs border border-slate-200 focus:outline-none focus:ring-2 ${
+                  isSeller ? 'focus:ring-[#E11D48]' : 'focus:ring-[#006A4E]'
+                } focus:border-transparent transition-all`}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-200 hover:bg-slate-300 text-slate-600 flex items-center justify-center text-xs transition cursor-pointer"
+                  title="মুছে ফেলুন"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* NOTIFICATION LIST (SCROLLABLE BODY) */}
+        <div className="flex-1 overflow-y-auto divide-y divide-slate-100 w-full bg-white">
+          {filteredNotifications.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64 text-center p-6 space-y-3">
+              <div className="w-16 h-16 rounded-3xl bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400">
+                <Bell className="w-8 h-8 text-slate-400" />
+              </div>
+              <div>
+                <p className="text-sm font-black text-slate-800">
+                  কোনো নোটিফিকেশন পাওয়া যায়নি
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  আপনার সকল নতুন নোটিশ ও পেমেন্ট আপডেট এখানে জমা হবে।
+                </p>
+              </div>
+            </div>
+          ) : selectedNotification ? (
+            /* NOTIFICATION DETAIL VIEW */
+            <div className="p-4 sm:p-5 flex flex-col h-full bg-white animate-in fade-in duration-200 overflow-y-auto">
+              <div className="space-y-4 max-w-lg mx-auto w-full">
+                <div className="flex items-start gap-3.5 p-3.5 rounded-2xl bg-slate-50 border border-slate-200">
+                  {getNotifIcon(selectedNotification)}
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-sm font-black text-slate-900 leading-tight">
+                      {selectedNotification.title}
+                    </h3>
+                    <p className="text-[11px] font-bold text-slate-500 mt-1 font-sans">
+                      {selectedNotification.time}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs sm:text-sm text-slate-700 leading-relaxed font-sans whitespace-pre-wrap">
+                  {selectedNotification.message}
+                </div>
+
+                <div className="pt-2 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleActionClick(selectedNotification)}
+                    className="flex-1 py-3 bg-[#006A4E] hover:bg-[#047857] text-white font-black text-xs sm:text-sm rounded-xl flex items-center justify-center gap-2 transition shadow-xs cursor-pointer active:scale-95"
+                  >
+                    <span>
+                      {selectedNotification.actionLabel || "সরাসরি ওপেন করুন"}
+                    </span>
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeleteConfirmTarget(selectedNotification.id);
+                    }}
+                    className="p-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-[#E11D48] font-bold text-xs transition cursor-pointer border border-rose-200"
+                    title="মুছে ফেলুন"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            filteredNotifications.map((notif) => (
+              <div
+                key={notif.id}
+                onClick={() => {
+                  markNotificationRead(notif.id);
+                  setSelectedNotification(notif);
+                }}
+                className={`p-3.5 sm:px-4 sm:py-3.5 flex items-start gap-3 cursor-pointer transition-colors w-full ${
+                  !notif.read
+                    ? "bg-emerald-50/50 hover:bg-emerald-50"
+                    : "hover:bg-slate-50 opacity-90"
+                }`}
+              >
+                {getNotifIcon(notif)}
+                <div className="flex-1 min-w-0 space-y-1">
+                  <div className="flex items-center justify-between gap-1">
+                    <h4
+                      className={`text-xs sm:text-sm font-black truncate ${
+                        !notif.read ? "text-[#006A4E]" : "text-slate-800"
+                      }`}
+                    >
+                      {notif.title}
+                    </h4>
+                    <span className="text-[10px] text-slate-500 shrink-0 font-bold ml-1 font-sans">
+                      {notif.time}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 leading-relaxed line-clamp-2">
+                    {notif.message}
+                  </p>
+                  {/* Action button & Delete */}
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 mt-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                          !notif.read
+                            ? "bg-emerald-100 text-[#006A4E]"
+                            : "bg-slate-100 text-slate-500"
+                        }`}
+                      >
+                        {!notif.read ? "নতুন নোটিশ" : "পড়া হয়েছে"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleActionClick(notif);
+                        }}
+                        className="text-[11px] font-black text-[#006A4E] hover:underline flex items-center gap-0.5 cursor-pointer"
+                      >
+                        <span>ওপেন</span>
+                        <ArrowRight className="w-3 h-3" />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeleteConfirmTarget(notif.id);
+                      }}
+                      className="p-1.5 text-slate-400 hover:text-[#E11D48] hover:bg-rose-50 rounded-lg transition cursor-pointer"
+                      title="মুছে ফেলুন"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* NOTIFICATION SETTINGS MODAL */}
+      {isNotifSettingsOpen && (
+        <div 
+          onClick={() => setIsNotifSettingsOpen(false)}
+          className="fixed inset-0 z-[100000] pointer-events-auto bg-black/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 font-bengali animate-in fade-in duration-150"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white border border-slate-200 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="font-black text-base text-slate-900 flex items-center gap-2">
+                <Settings className="w-5 h-5 text-[#006A4E]" />
+                <span>নোটিফিকেশন পছন্দসমূহ</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsNotifSettingsOpen(false)}
+                className="p-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-900 transition cursor-pointer"
+                title="বন্ধ করুন"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3.5 text-xs font-semibold text-slate-700">
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <div>
+                  <div className="font-bold text-slate-900 text-sm">অর্ডার ও ডেলিভারি আপডেট</div>
+                  <div className="text-[11px] text-slate-500">নতুন ডেলিভারি ও কাজের অগ্রগতি অ্যালার্ট</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={notifSettings.orderUpdates}
+                  onChange={(e) => setNotifSettings({ ...notifSettings, orderUpdates: e.target.checked })}
+                  className="w-5 h-5 accent-[#006A4E] cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <div>
+                  <div className="font-bold text-slate-900 text-sm">নতুন মেসেজ নোটিফিকেশন</div>
+                  <div className="text-[11px] text-slate-500">সেলার ও বায়ার থেকে নতুন বার্তার নোটিশ</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={notifSettings.messageAlerts}
+                  onChange={(e) => setNotifSettings({ ...notifSettings, messageAlerts: e.target.checked })}
+                  className="w-5 h-5 accent-[#006A4E] cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <div>
+                  <div className="font-bold text-slate-900 text-sm">কোর্স ও লাইভ ক্লাস আপডেট</div>
+                  <div className="text-[11px] text-slate-500">নতুন লেকচার, লাইভ ক্লাস ও অ্যাসাইনমেন্ট অ্যালার্ট</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={notifSettings.courseAlerts}
+                  onChange={(e) => setNotifSettings({ ...notifSettings, courseAlerts: e.target.checked })}
+                  className="w-5 h-5 accent-[#006A4E] cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200">
+                <div>
+                  <div className="font-bold text-slate-900 text-sm">সাউন্ড ও অডিও অ্যালার্ট</div>
+                  <div className="text-[11px] text-slate-500">নোটিফিকেশন এলে নোটিফিকেশন সাউন্ড বাজবে</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={notifSettings.soundAlerts}
+                  onChange={(e) => setNotifSettings({ ...notifSettings, soundAlerts: e.target.checked })}
+                  className="w-5 h-5 accent-[#006A4E] cursor-pointer"
+                />
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsNotifSettingsOpen(false)}
+                  className="w-full py-2.5 bg-[#006A4E] hover:bg-[#047857] text-white font-black rounded-xl transition text-xs shadow-xs cursor-pointer"
+                >
+                  সংরক্ষণ ও বন্ধ করুন
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Delete Confirmation Popup Modal */}
+      {deleteConfirmTarget && (
+        <div 
+          className="fixed inset-0 z-[100000] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+          onClick={() => setDeleteConfirmTarget(null)}
+        >
+          <div 
+            className="bg-white rounded-2xl p-5 max-w-xs w-full shadow-2xl text-center space-y-3 font-bengali animate-in zoom-in-95 duration-150 border border-slate-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-11 h-11 rounded-full bg-rose-100 text-[#E11D48] mx-auto flex items-center justify-center">
+              <Trash2 className="w-5 h-5 stroke-[2.2]" />
+            </div>
+
+            <div>
+              <h4 className="text-sm font-black text-slate-900">
+                {deleteConfirmTarget === 'all' ? 'সব নোটিফিকেশন মুছবেন?' : 'নোটিফিকেশন মুছবেন?'}
+              </h4>
+              <p className="text-[11.5px] text-slate-500 mt-1 leading-relaxed">
+                {deleteConfirmTarget === 'all' 
+                  ? 'আপনি কি নিশ্চিত যে সব নোটিফিকেশন মুছে ফেলতে চান? এটি পুনরায় ফিরিয়ে আনা যাবে না।'
+                  : 'আপনি কি এই নোটিফিকেশনটি মুছে ফেলতে চান?'}
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1.5">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmTarget(null)}
+                className="flex-1 py-1.5 px-3 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-100 transition cursor-pointer"
+              >
+                বাতিল
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (deleteConfirmTarget === 'all') {
+                    clearAllNotifications();
+                  } else {
+                    deleteNotification(deleteConfirmTarget);
+                    if (selectedNotification && selectedNotification.id === deleteConfirmTarget) {
+                      setSelectedNotification(null);
+                    }
+                  }
+                  playAppSound("notification");
+                  setDeleteConfirmTarget(null);
+                }}
+                className="flex-1 py-1.5 px-3 rounded-xl bg-[#E11D48] hover:bg-rose-700 text-white text-xs font-bold transition shadow-xs cursor-pointer"
+              >
+                হ্যাঁ, মুছুন
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

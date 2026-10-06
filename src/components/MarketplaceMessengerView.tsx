@@ -1,0 +1,1361 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { useData } from '../context/DataContext';
+import { DirectProjectOfferChatCard } from './DirectProjectOfferChatCard';
+import { SendDirectOfferModal } from './SendDirectOfferModal';
+import { DirectOfferMeta, ChatMessage } from '../types';
+import {
+  X,
+  Lock,
+  Send,
+  Video,
+  ExternalLink,
+  ShieldCheck,
+  Paperclip,
+  ThumbsUp,
+  Smile,
+  CheckCheck,
+  Search,
+  Settings,
+  ChevronLeft,
+  Phone,
+  Plus,
+  MessageCircle,
+  Sparkles,
+  Star,
+  CheckCircle2,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  PhoneOff,
+  Briefcase,
+  Clock,
+  DollarSign,
+  FileText,
+  BadgeCheck,
+  Sparkle,
+  ShoppingBag
+} from 'lucide-react';
+
+const getDirectOfferFromMessage = (m: { text: string; id: string; directOffer?: DirectOfferMeta }, winSenderName: string, winSenderId?: string): DirectOfferMeta | null => {
+  if (m.directOffer) return m.directOffer;
+  if (!m.text.includes('💼') && !m.text.includes('অফার') && !m.text.includes('অর্ডার')) return null;
+
+  const titleMatch = m.text.match(/সার্ভিস:\s*([^\n]+)/) || m.text.match(/প্রজেক্ট:\s*([^\n]+)/);
+  const budgetMatch = m.text.match(/বাজেট:\s*৳?([^\n]+)/);
+  const deliveryMatch = m.text.match(/ডেলিভারি[^\:]*:\s*([^\n]+)/);
+
+  const title = titleMatch ? titleMatch[1].trim() : 'কাস্টম প্রজেক্ট প্রস্তাব';
+  const budgetStr = budgetMatch ? budgetMatch[1].replace(/[^\d]/g, '') : '5000';
+  const deliveryStr = deliveryMatch ? deliveryMatch[1].replace(/[^\d]/g, '') : '3';
+
+  return {
+    id: `parsed-${m.id}`,
+    title,
+    category: 'কাস্টম সার্ভিস',
+    budget: Number(budgetStr) || 5000,
+    deliveryDays: Number(deliveryStr) || 3,
+    description: m.text,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
+    status: 'pending',
+    targetSellerName: winSenderName,
+    targetSellerId: winSenderId
+  };
+};
+
+interface ConversationItem {
+  id: string;
+  name: string;
+  avatar: string;
+  role: string;
+  badge?: string;
+  rating?: number;
+  ordersCount?: number;
+  lastMessage: string;
+  time: string;
+  unreadCount?: number;
+  isOnline: boolean;
+  onlineTimeAgo?: string;
+  category?: string;
+  orderId?: string;
+}
+
+interface MarketplaceMessengerViewProps {
+  isEmbedded?: boolean;
+  onClose?: () => void;
+  initialCategory?: 'all' | 'sellers' | 'online' | 'orders';
+  externalSearchQuery?: string;
+  onSearchQueryChange?: (query: string) => void;
+}
+
+export const MarketplaceMessengerView: React.FC<MarketplaceMessengerViewProps> = ({
+  isEmbedded = false,
+  onClose,
+  initialCategory,
+  externalSearchQuery,
+  onSearchQueryChange
+}) => {
+  const {
+    activeChatWindows,
+    closeChatWindow,
+    sendChatMessage,
+    createGoogleMeetCall,
+    currentUser,
+    directMessages,
+    openChatWindow,
+    activeMessengerConversationId,
+    setActiveMessengerConversationId,
+    openInAppMeet,
+    users
+  } = useData();
+
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [searchQueryInternal, setSearchQueryInternal] = useState('');
+  const [isSpeakerActive, setIsSpeakerActive] = useState(true);
+  
+  const searchQuery = externalSearchQuery !== undefined ? externalSearchQuery : searchQueryInternal;
+  const setSearchQuery = (val: string) => {
+    setSearchQueryInternal(val);
+    if (onSearchQueryChange) onSearchQueryChange(val);
+  };
+  const [activeCategoryFilter, setActiveCategoryFilter] = useState<'all' | 'sellers' | 'online' | 'orders'>(initialCategory || 'all');
+
+  useEffect(() => {
+    if (initialCategory) {
+      setActiveCategoryFilter(initialCategory);
+    }
+  }, [initialCategory]);
+  
+  // Interactive Modals
+  const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
+  const [userNote, setUserNote] = useState('Available for hire 💼');
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
+  const [newChatSearch, setNewChatSearch] = useState('');
+  const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+  const [activeCallState, setActiveCallState] = useState<{
+    active: boolean;
+    callerName: string;
+    callerAvatar: string;
+    muted: boolean;
+    duration: number;
+  } | null>(null);
+
+  // Settings toggles
+  const [settings, setSettings] = useState({
+    activeStatus: true,
+    messageSound: true,
+    orderAlerts: true,
+    readReceipts: true
+  });
+
+  // Synchronize selected conversation ID
+  useEffect(() => {
+    setSelectedConversationId(activeMessengerConversationId || null);
+  }, [activeMessengerConversationId]);
+
+  // Call timer interval
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (activeCallState?.active) {
+      interval = setInterval(() => {
+        setActiveCallState(prev => prev ? { ...prev, duration: prev.duration + 1 } : null);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [activeCallState?.active]);
+
+  // Real conversations only - no hardcoded/mock fake chats
+  const defaultHistory: ConversationItem[] = [];
+
+  // Dynamic list merging active chat windows (Real conversations)
+  const activeWindowsAsConversations: ConversationItem[] = (activeChatWindows || []).map(w => ({
+    id: w.id,
+    name: w.senderName,
+    avatar: w.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
+    role: w.senderRole || 'ভেরিফাইড ইউজার',
+    badge: 'Verified',
+    rating: 5.0,
+    ordersCount: 1,
+    lastMessage: w.messages[w.messages.length - 1]?.text || 'চ্যাট শুরু হয়েছে...',
+    time: w.messages[w.messages.length - 1]?.time || 'এখন',
+    isOnline: true,
+    category: 'sellers'
+  }));
+
+  const allConversationsMap = new Map<string, ConversationItem>();
+  activeWindowsAsConversations.forEach(c => allConversationsMap.set(c.id, c));
+
+  // Add real direct messages scoped to current user
+  if (directMessages && directMessages.length > 0) {
+    directMessages.forEach(dm => {
+      const isForMe = Boolean(
+        currentUser && (
+          dm.recipientId === currentUser.id ||
+          dm.senderId === currentUser.id ||
+          (dm.recipientEmail && currentUser.email && dm.recipientEmail.toLowerCase() === currentUser.email.toLowerCase()) ||
+          (dm.senderEmail && currentUser.email && dm.senderEmail.toLowerCase() === currentUser.email.toLowerCase())
+        )
+      );
+      if (isForMe && !allConversationsMap.has(dm.id)) {
+        allConversationsMap.set(dm.id, {
+          id: dm.id,
+          name: dm.senderName || 'ইউজার',
+          avatar: dm.senderAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=120&q=80',
+          role: dm.senderRole || 'মার্কেটপ্লেস মেম্বার',
+          badge: 'Member',
+          rating: 5.0,
+          ordersCount: 1,
+          lastMessage: (dm as any).message || dm.text,
+          time: dm.time || 'এইমাত্র',
+          unreadCount: dm.read ? 0 : (dm.unreadCount || 1),
+          isOnline: true,
+          category: dm.category || 'sellers',
+          orderId: dm.orderId
+        });
+      }
+    });
+  }
+
+  const conversationList = Array.from(allConversationsMap.values())
+    .filter(c => {
+      const matchesSearch = c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.lastMessage.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.role.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      if (!matchesSearch) return false;
+      if (activeCategoryFilter === 'sellers') return c.category === 'sellers';
+      if (activeCategoryFilter === 'orders') return c.category === 'orders';
+      if (activeCategoryFilter === 'online') return c.isOnline;
+      return true;
+    })
+    .sort((a, b) => {
+      const unreadA = a.unreadCount || 0;
+      const unreadB = b.unreadCount || 0;
+      if (unreadA > 0 && unreadB === 0) return -1;
+      if (unreadB > 0 && unreadA === 0) return 1;
+      if (unreadA !== unreadB) return unreadB - unreadA;
+      return 0;
+    });
+
+  // Top Active Stories / Contacts derived dynamically from real online conversations
+  const topActiveStories = conversationList.filter(c => c.isOnline).slice(0, 5).map(c => ({
+    id: `story-${c.id}`,
+    name: c.name.split(' ')[0],
+    avatar: c.avatar,
+    isOnline: true,
+    convoId: c.id
+  }));
+
+  const currentActiveWin = activeChatWindows?.find(w => w.id === selectedConversationId) || (
+    selectedConversationId ? {
+      id: selectedConversationId,
+      senderName: conversationList.find(c => c.id === selectedConversationId)?.name || 'মার্কেটপ্লেস সেলার',
+      senderRole: conversationList.find(c => c.id === selectedConversationId)?.role || 'টপ রেটেড সেলার',
+      senderAvatar: conversationList.find(c => c.id === selectedConversationId)?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
+      messages: [
+        {
+          id: 'msg-default-1',
+          senderName: conversationList.find(c => c.id === selectedConversationId)?.name || 'সেলার',
+          senderAvatar: conversationList.find(c => c.id === selectedConversationId)?.avatar,
+          isSelf: false,
+          text: conversationList.find(c => c.id === selectedConversationId)?.lastMessage || 'আসসালামু আলাইকুম! আপনার প্রজেক্টের রিকোয়ারমেন্ট বা সার্ভিস সম্পর্কে জানান।',
+          time: conversationList.find(c => c.id === selectedConversationId)?.time || '১০ মিনিট আগে'
+        }
+      ]
+    } : null
+  );
+
+  return (
+    <div className={`w-full flex flex-col font-bengali ${isEmbedded ? 'h-[calc(100dvh-100px)] sm:h-[80vh] min-h-[360px]' : 'h-full'}`}>
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row h-full overflow-hidden bg-white dark:bg-[#18222D]">
+        
+        {/* LEFT PANE: MESSAGES HISTORY & STORIES */}
+        <div className={`w-full md:w-80 lg:w-96 border-r-0 md:border-r border-slate-200 dark:border-slate-800/80 bg-white dark:bg-[#18222D] flex flex-col h-full min-h-0 shrink-0 relative ${
+          selectedConversationId ? 'hidden md:flex' : 'flex'
+        }`}>
+          
+          {/* MESSAGES HEADER: Clean & Professional, Search + Settings set together on the right (hidden on embedded mobile as header is provided by MarketplaceSection) */}
+          <div className={`px-4 py-3 items-center justify-between border-b border-slate-100 dark:border-slate-800/80 shrink-0 ${isEmbedded ? 'hidden sm:flex' : 'flex'}`}>
+            <div className="flex items-center gap-2">
+              <div>
+                <h1 className="text-lg sm:text-xl font-black text-slate-950 dark:text-white tracking-tight flex items-center gap-1.5">
+                  <span>Messages</span>
+                </h1>
+              </div>
+            </div>
+
+            {/* Right Header Buttons: Settings Icon */}
+            <div className="flex items-center gap-1.5">
+              <button
+                id="messenger-settings-trigger"
+                type="button"
+                onClick={() => setIsSettingsModalOpen(true)}
+                className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-200 hover:bg-slate-200 transition cursor-pointer"
+                title="মেসেঞ্জার সেটিংস"
+              >
+                <Settings className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* SEARCH BAR (HIDDEN ON PHONE VIEW FOR MAXIMUM VERTICAL SPACE) */}
+          <div className="hidden md:block px-3.5 pt-3 pb-2 shrink-0">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                id="messenger-search-input"
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="সেলার, ক্লায়েন্ট বা সার্ভিস খুঁজুন..."
+                className="w-full pl-9 pr-8 py-2 bg-slate-100 dark:bg-slate-800/80 border-none rounded-full text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#006A4E]"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* ACTIVE STORIES / CONTACTS ROW - Fixed & Static at the top, NEVER scrolls with messages */}
+          <div className="px-1.5 sm:px-3.5 py-1.5 sm:py-2 border-b border-slate-100 dark:border-slate-800/80 bg-white dark:bg-[#18222D] shrink-0 z-10">
+            <div className="flex items-center gap-1.5 sm:gap-3 overflow-x-auto no-scrollbar py-0.5 m-0 px-1 sm:px-0">
+              {/* User Note Pill */}
+              <div
+                onClick={() => setIsNoteModalOpen(true)}
+                className="flex flex-col items-center gap-0.5 sm:gap-1 shrink-0 cursor-pointer group m-0 p-0"
+              >
+                <div className="relative">
+                  <img
+                    src={currentUser?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80'}
+                    alt="You"
+                    className="w-9 h-9 sm:w-11 sm:h-11 rounded-full object-cover border-2 border-slate-200 dark:border-slate-700 group-hover:border-blue-600/50 transition"
+                  />
+                  <div className="absolute -top-1 -right-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] rounded-full p-0.5 shadow-xs">
+                    💬
+                  </div>
+                </div>
+                <span className="text-[9px] sm:text-[10px] font-bold text-slate-600 dark:text-slate-300 truncate max-w-[48px] sm:max-w-[50px] text-center">
+                  Your note
+                </span>
+              </div>
+
+              {/* Active Sellers Stories */}
+              {topActiveStories.map(story => (
+                <div
+                  key={story.id}
+                  onClick={() => {
+                    setSelectedConversationId(story.convoId);
+                    if (setActiveMessengerConversationId) setActiveMessengerConversationId(story.convoId);
+                  }}
+                  className="flex flex-col items-center gap-0.5 sm:gap-1 shrink-0 cursor-pointer group m-0 p-0"
+                >
+                  <div className="relative p-0.5 rounded-full border-2 border-blue-600/50">
+                    <img
+                      src={story.avatar}
+                      alt={story.name}
+                      className="w-8.5 h-8.5 sm:w-10 sm:h-10 rounded-full object-cover group-hover:scale-105 transition"
+                    />
+                    <span className="absolute bottom-0 right-0 w-2 h-2 sm:w-2.5 sm:h-2.5 bg-blue-500 rounded-full border-2 border-white dark:border-[#18222D]" />
+                  </div>
+                  <span className="text-[9px] sm:text-[10px] font-bold text-slate-700 dark:text-slate-300 truncate max-w-[50px] sm:max-w-[54px] text-center">
+                    {story.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* SCROLLABLE CONVERSATIONS FEED */}
+          <div 
+            className="flex-1 min-h-0 overflow-y-auto no-scrollbar pb-24 overscroll-contain touch-pan-y"
+            style={{ WebkitOverflowScrolling: 'touch' }}
+          >
+            {/* CATEGORY FILTER TABS (HIDDEN ON PHONE VIEW FOR MAXIMUM VERTICAL SPACE) */}
+            <div className="hidden sm:flex px-3.5 py-2 items-center gap-1.5 border-b border-slate-100 dark:border-slate-800/80 bg-white dark:bg-[#18222D] overflow-x-auto no-scrollbar">
+              {[
+                { id: 'all', label: 'সব ইনবক্স' },
+                { id: 'sellers', label: 'সেলার্স' },
+                { id: 'orders', label: 'অর্ডার চ্যাট' },
+                { id: 'online', label: 'অনলাইন' }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveCategoryFilter(tab.id as any)}
+                  className={`px-3 py-1 rounded-full text-xs font-bold transition whitespace-nowrap cursor-pointer ${
+                    activeCategoryFilter === tab.id
+                      ? 'bg-[#006A4E] text-white font-black shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* CONVERSATION LIST FEED */}
+            <div className="divide-y divide-slate-100 dark:divide-slate-800/50">
+              {conversationList.length === 0 ? (
+                <div className="p-8 text-center text-slate-400 space-y-2">
+                  <MessageCircle className="w-10 h-10 mx-auto text-slate-300 dark:text-slate-600" />
+                  <p className="text-xs font-bold">কোনো চ্যাট বা সেলার পাওয়া যায়নি</p>
+                </div>
+              ) : (
+                conversationList.map(c => {
+                  const isSelected = selectedConversationId === c.id;
+                  return (
+                    <div
+                      key={c.id}
+                      onClick={() => {
+                        setSelectedConversationId(c.id);
+                        if (setActiveMessengerConversationId) setActiveMessengerConversationId(c.id);
+                      }}
+                      className={`p-3 sm:px-4 sm:py-3.5 flex items-center gap-3 cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'bg-blue-50/80 dark:bg-slate-950/20 border-l-4 border-blue-600/50'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                      }`}
+                    >
+                      {/* Avatar with Online Indicator */}
+                      <div className="relative shrink-0">
+                        <img
+                          src={c.avatar}
+                          alt={c.name}
+                          className="w-11 h-11 sm:w-12 sm:h-12 rounded-full object-cover border border-slate-200 dark:border-slate-700"
+                        />
+                        {c.isOnline ? (
+                          <span className="absolute bottom-0 right-0 w-2.5 h-2.5 sm:w-3 sm:h-3 bg-blue-500 rounded-full border-2 border-white dark:border-[#18222D]" />
+                        ) : (
+                          c.onlineTimeAgo && (
+                            <span className="absolute -bottom-1 -right-1 bg-slate-900 text-white text-[8px] font-bold px-1 rounded-full border border-slate-700">
+                              {c.onlineTimeAgo}
+                            </span>
+                          )
+                        )}
+                      </div>
+
+                      {/* Name, Badge, Rating & Last Message */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <h4 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate flex items-center gap-1">
+                              <span className="truncate">{c.name}</span>
+                              <span title="ভেরিফাইড প্রোফাইল"><CheckCircle2 className="w-3.5 h-3.5 text-[#0084FF] fill-[#0084FF] text-white shrink-0" /></span>
+                            </h4>
+                            {c.badge && (
+                              <span className="px-1.5 py-0.2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[9px] font-bold border border-slate-200 dark:border-slate-700 shrink-0">
+                                {c.badge}
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-slate-400 font-bold shrink-0 ml-1">
+                            {c.time}
+                          </span>
+                        </div>
+
+                        {/* Role & Rating */}
+                        <div className="flex items-center justify-between gap-2 mt-0.5 text-[10px] text-slate-500 dark:text-slate-400 font-semibold">
+                          <span className="truncate flex-1">{c.role}</span>
+                          {c.rating && (
+                            <span className="hidden sm:flex items-center gap-1 text-slate-700 dark:text-slate-200 shrink-0 font-extrabold text-[10px] bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded-md">
+                              <Star className="w-3 h-3 fill-amber-400 text-amber-400 shrink-0" />
+                              <span>{c.rating.toFixed(1)}</span>
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Message snippet */}
+                        <div className="flex items-center justify-between mt-0.5">
+                          <p className="text-xs text-slate-600 dark:text-slate-300 truncate font-medium flex-1 mr-2">
+                            {c.lastMessage}
+                          </p>
+                          {c.unreadCount ? (
+                            <span className="min-w-5 h-5 px-1.5 bg-[#006A4E] text-white text-[10px] font-black rounded-full flex items-center justify-center shrink-0 shadow-xs ring-2 ring-white dark:ring-slate-900">
+                              {c.unreadCount}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+        </div>
+
+        {/* RIGHT PANE: CHAT CONVERSATION VIEW (FIXED ON PHONE VIEW) */}
+        <div className={`flex-1 min-h-0 flex flex-col h-full bg-white dark:bg-[#18222D] ${
+          selectedConversationId ? 'fixed inset-0 z-[70] md:static md:z-auto flex' : 'hidden md:flex'
+        }`}>
+          {currentActiveWin ? (
+            <EmbeddedChatThread
+              win={currentActiveWin}
+              onBack={() => {
+                setSelectedConversationId(null);
+                if (setActiveMessengerConversationId) setActiveMessengerConversationId(null);
+              }}
+              onSend={(text) => sendChatMessage(currentActiveWin.id, text)}
+              onCreateMeet={() => createGoogleMeetCall(currentActiveWin.id)}
+              onStartVoiceCall={() => {
+                if (openInAppMeet) {
+                  openInAppMeet({
+                    windowId: currentActiveWin.id,
+                    targetName: currentActiveWin.senderName,
+                    targetAvatar: currentActiveWin.senderAvatar,
+                    targetRole: currentActiveWin.senderRole,
+                    initialType: 'audio'
+                  });
+                } else {
+                  setActiveCallState({
+                    active: true,
+                    callerName: currentActiveWin.senderName,
+                    callerAvatar: currentActiveWin.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
+                    muted: false,
+                    duration: 0
+                  });
+                }
+              }}
+              currentUserName={currentUser?.name || 'আমি'}
+            />
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-3 text-slate-400">
+              <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-slate-950/30 text-[#38BDF8] flex items-center justify-center">
+                <MessageCircle className="w-8 h-8" />
+              </div>
+              <h3 className="text-base font-black text-slate-800 dark:text-slate-200">
+                মার্কেটপ্লেস চ্যাট ও ইনবক্স
+              </h3>
+              <p className="text-xs max-w-xs leading-relaxed text-slate-500">
+                বাম পাশের তালিকা থেকে যেকোনো ভেরিফাইড সেলার বা প্রজেক্ট নির্বাচন করে সরাসরি বার্তা পাঠান ও ফাইল আদান-প্রদান করুন।
+              </p>
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      {/* SETTINGS MODAL */}
+      {isSettingsModalOpen && (
+        <div 
+          onClick={() => setIsSettingsModalOpen(false)}
+          className="fixed inset-0 z-[100000] pointer-events-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 font-bengali animate-in fade-in duration-150"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-[#1C2733] border border-slate-200 dark:border-slate-700 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+              <h3 className="font-black text-base text-slate-900 dark:text-white flex items-center gap-2">
+                <Settings className="w-5 h-5 text-[#38BDF8]" />
+                <span>মেসেঞ্জার ও চ্যাট সেটিংস</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="p-1.5 rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs font-semibold text-slate-700 dark:text-slate-200">
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
+                <div>
+                  <div className="font-bold text-slate-900 dark:text-white text-sm">অ্যাক্টিভ অনলাইন স্ট্যাটাস</div>
+                  <div className="text-[11px] text-slate-400">বায়ার ও ক্লায়েন্টদের কাছে অনলাইন দৃশ্যমান রাখুন</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.activeStatus}
+                  onChange={(e) => setSettings({ ...settings, activeStatus: e.target.checked })}
+                  className="w-5 h-5 accent-[#006A4E] cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
+                <div>
+                  <div className="font-bold text-slate-900 dark:text-white text-sm">মেসেজ সাউন্ড নোটিফিকেশন</div>
+                  <div className="text-[11px] text-slate-400">নতুন বার্তা আসলে শব্দ হবে</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.messageSound}
+                  onChange={(e) => setSettings({ ...settings, messageSound: e.target.checked })}
+                  className="w-5 h-5 accent-[#006A4E] cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
+                <div>
+                  <div className="font-bold text-slate-900 dark:text-white text-sm">অর্ডার ও অফার নোটিফিকেশন</div>
+                  <div className="text-[11px] text-slate-400">কাস্টম অফার ও ডেলিভারি আপডেট সাথে সাথে পান</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.orderAlerts}
+                  onChange={(e) => setSettings({ ...settings, orderAlerts: e.target.checked })}
+                  className="w-5 h-5 accent-[#006A4E] cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60">
+                <div>
+                  <div className="font-bold text-slate-900 dark:text-white text-sm">রিড রিসিপ্ট (Read Receipts)</div>
+                  <div className="text-[11px] text-slate-400">মেসেজ পড়া হয়েছে কিনা টিক দেখাবে</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.readReceipts}
+                  onChange={(e) => setSettings({ ...settings, readReceipts: e.target.checked })}
+                  className="w-5 h-5 accent-[#006A4E] cursor-pointer"
+                />
+              </div>
+            </div>
+
+            <div className="px-5 py-3 bg-slate-50 dark:bg-slate-900/80 border-t border-slate-100 dark:border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsSettingsModalOpen(false)}
+                className="px-4 py-2 bg-[#006A4E] text-white text-xs font-black rounded-xl cursor-pointer shadow-xs transition"
+              >
+                সংরক্ষণ করুন
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NOTE UPDATE MODAL */}
+      {isNoteModalOpen && (
+        <div 
+          onClick={() => setIsNoteModalOpen(false)}
+          className="fixed inset-0 z-[100000] pointer-events-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 font-bengali animate-in fade-in duration-150"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-[#1C2733] border border-slate-200 dark:border-slate-700 w-full max-w-sm rounded-2xl shadow-2xl p-4 sm:p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h4 className="font-black text-sm text-slate-900 dark:text-white">
+                আপনার স্ট্যাটাস নোট দিন
+              </h4>
+              <button
+                type="button"
+                onClick={() => setIsNoteModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white text-xs cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <input
+              type="text"
+              value={userNote}
+              onChange={(e) => setUserNote(e.target.value)}
+              placeholder="যেমন: Available for web development 💻"
+              className="w-full px-3.5 py-2.5 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#006A4E]"
+            />
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsNoteModalOpen(false)}
+                className="px-3 py-1.5 text-xs text-slate-500 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer"
+              >
+                বাতিল
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsNoteModalOpen(false)}
+                className="px-4 py-1.5 bg-[#006A4E] text-white text-xs font-black rounded-lg cursor-pointer"
+              >
+                শেয়ার করুন
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* NEW CHAT SELECTION MODAL */}
+      {isNewChatModalOpen && (
+        <div 
+          onClick={() => setIsNewChatModalOpen(false)}
+          className="fixed inset-0 z-[100000] pointer-events-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 font-bengali animate-in fade-in duration-150"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-[#1C2733] border border-slate-200 dark:border-slate-700 w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden max-h-[80vh] flex flex-col">
+            <div className="px-5 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0">
+              <h3 className="font-black text-sm text-slate-900 dark:text-white flex items-center gap-2">
+                <Plus className="w-4 h-4 text-[#38BDF8]" />
+                <span>নতুন কথোপকথন শুরু করুন</span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsNewChatModalOpen(false)}
+                className="p-1 rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-3 border-b border-slate-100 dark:border-slate-800 shrink-0">
+              <input
+                type="text"
+                value={newChatSearch}
+                onChange={(e) => setNewChatSearch(e.target.value)}
+                placeholder="সেলার বা ব্যবহারকারীর নাম খুঁজুন..."
+                className="w-full px-3.5 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-2 divide-y divide-slate-100 dark:divide-slate-800/50">
+              {(() => {
+                const availableUsers = (users || []).filter(u => {
+                  if (currentUser && u.id === currentUser.id) return false;
+                  if (!newChatSearch.trim()) return true;
+                  const q = newChatSearch.toLowerCase();
+                  return u.name.toLowerCase().includes(q) || (u.email && u.email.toLowerCase().includes(q)) || (u.role && u.role.toLowerCase().includes(q));
+                });
+
+                if (availableUsers.length === 0) {
+                  return (
+                    <div className="p-6 text-center text-slate-400 space-y-2">
+                      <MessageCircle className="w-8 h-8 mx-auto text-slate-400/50" />
+                      <p className="text-xs font-bold">কোনো ব্যবহারকারী পাওয়া যায়নি</p>
+                    </div>
+                  );
+                }
+
+                return availableUsers.map(u => (
+                  <div
+                    key={u.id}
+                    onClick={() => {
+                      const convoId = `chat-${u.id}`;
+                      openChatWindow({
+                        id: convoId,
+                        senderName: u.name,
+                        senderAvatar: u.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=120&q=80',
+                        senderRole: u.role === 'customer' ? 'বায়ার' : ((u.role as string) === 'seller' ? 'সেলার' : 'মেম্বার')
+                      });
+                      setSelectedConversationId(convoId);
+                      setIsNewChatModalOpen(false);
+                      setNewChatSearch('');
+                    }}
+                    className="p-3 flex items-center gap-3 hover:bg-slate-50 dark:hover:bg-slate-800/60 rounded-xl cursor-pointer transition"
+                  >
+                    <img
+                      src={u.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=120&q=80'}
+                      alt={u.name}
+                      className="w-10 h-10 rounded-full object-cover border border-slate-200 dark:border-slate-700"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-xs font-black text-slate-900 dark:text-white truncate">{u.name}</h4>
+                      <p className="text-[10px] text-slate-400 truncate capitalize">{u.role || 'মেম্বার'}</p>
+                    </div>
+                    <span className="text-[10px] px-2.5 py-1 bg-[#006A4E]/10 text-[#38BDF8] font-black rounded-full border border-blue-600/50/30">
+                      বার্তা পাঠান
+                    </span>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI ASSISTANT PROMPT MODAL */}
+      {isAiModalOpen && (
+        <div 
+          onClick={() => setIsAiModalOpen(false)}
+          className="fixed inset-0 z-[100000] pointer-events-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 font-bengali animate-in fade-in duration-150"
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white dark:bg-[#1C2733] border border-slate-200 dark:border-slate-700 w-full max-w-sm rounded-2xl shadow-2xl p-4 sm:p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center">
+                  <Sparkles className="w-4 h-4" />
+                </div>
+                <div>
+                  <h4 className="font-black text-sm text-slate-900 dark:text-white">
+                    PiTen Smart AI Assistant
+                  </h4>
+                  <p className="text-[10px] text-slate-400">প্রজেক্ট ব্রিফ, ডেসক্রিপশন বা মেসেজ লিখতে সাহায্য নিন</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAiModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                AI দিয়ে কি লিখতে চান?
+              </label>
+              <textarea
+                rows={3}
+                placeholder="যেমন: ক্লায়েন্টকে কাজের আপডেট দেয়ার জন্য একটি পেশাদার মেসেজ ড্রাফট করুন..."
+                className="w-full p-3 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAiModalOpen(false)}
+                className="px-3 py-1.5 text-xs text-slate-500 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg cursor-pointer"
+              >
+                বন্ধ
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  alert('AI খসড়া তৈরি হয়েছে ও ক্লিপবোর্ডে কপি করা হয়েছে!');
+                  setIsAiModalOpen(false);
+                }}
+                className="px-4 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white text-xs font-black rounded-lg cursor-pointer shadow-md"
+              >
+                জেনারেট করুন ✨
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ACTIVE VOICE CALL MODAL (Clean, Professional, 100% Responsive on Phone & Desktop) */}
+      {activeCallState?.active && (
+        <div className="fixed inset-0 z-[100000] pointer-events-auto bg-slate-950/95 backdrop-blur-md flex flex-col justify-between p-4 sm:p-8 font-bengali text-white animate-in fade-in duration-200 select-none pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
+          {/* Top Info Bar */}
+          <div className="flex items-center justify-between max-w-md w-full mx-auto px-2">
+            <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-full">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>নিরাপদ এনক্রিপ্টেড কল</span>
+            </div>
+            <span className="text-xs font-mono font-bold text-slate-400 bg-slate-900 px-3 py-1.5 rounded-full border border-slate-800">
+              HD অডিও
+            </span>
+          </div>
+
+          {/* Center: Caller Avatar with Acoustic Waves & Info */}
+          <div className="text-center space-y-4 max-w-sm w-full mx-auto my-auto">
+            <div className="relative inline-block">
+              {/* Acoustic Wave Rings */}
+              <div className="absolute inset-0 rounded-full bg-[#38BDF8]/20 animate-ping scale-150" />
+              <div className="absolute inset-0 rounded-full bg-emerald-500/15 animate-pulse scale-175" />
+              <img
+                src={activeCallState.callerAvatar}
+                alt={activeCallState.callerName}
+                className="w-28 h-28 sm:w-36 sm:h-36 rounded-full object-cover mx-auto border-4 border-[#38BDF8] shadow-2xl relative z-10 ring-4 ring-[#38BDF8]/30"
+              />
+              <span className="w-5 h-5 bg-emerald-500 rounded-full border-2 border-slate-950 absolute bottom-1 right-1 z-20 shadow-md" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-xl sm:text-2xl font-black text-white">{activeCallState.callerName}</h3>
+              <p className="text-xs text-slate-400 font-bold">মার্কেটপ্লেস ভেরিফাইড ইউজার</p>
+              <div className="text-sm font-mono text-emerald-400 font-black tracking-wider pt-1 flex items-center justify-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>
+                  {Math.floor(activeCallState.duration / 60).toString().padStart(2, '0')}:
+                  {(activeCallState.duration % 60).toString().padStart(2, '0')}
+                </span>
+              </div>
+            </div>
+
+            {/* Dynamic Soundwave Equalizer */}
+            <div className="flex items-center justify-center gap-1 py-1 h-8">
+              <span className="w-1 bg-[#38BDF8] rounded-full animate-[pulse_0.6s_ease-in-out_infinite] h-3" />
+              <span className="w-1 bg-emerald-400 rounded-full animate-[pulse_0.8s_ease-in-out_infinite] h-6" />
+              <span className="w-1 bg-cyan-400 rounded-full animate-[pulse_0.5s_ease-in-out_infinite] h-8" />
+              <span className="w-1 bg-[#38BDF8] rounded-full animate-[pulse_0.7s_ease-in-out_infinite] h-5" />
+              <span className="w-1 bg-sky-400 rounded-full animate-[pulse_0.9s_ease-in-out_infinite] h-7" />
+              <span className="w-1 bg-emerald-400 rounded-full animate-[pulse_0.6s_ease-in-out_infinite] h-4" />
+              <span className="w-1 bg-[#38BDF8] rounded-full animate-[pulse_0.8s_ease-in-out_infinite] h-2" />
+            </div>
+
+            <p className="text-[11px] text-slate-400">
+              {activeCallState.muted ? '🔇 আপনার মাইক্রোফোন মিউট করা আছে' : '🎙️ কথা স্পষ্ট শোনা যাচ্ছে'}
+            </p>
+          </div>
+
+          {/* Bottom Call Controls (Responsive, Touch-Friendly) */}
+          <div className="flex items-center justify-center gap-5 sm:gap-6 max-w-sm w-full mx-auto">
+            {/* Mic Toggle */}
+            <button
+              type="button"
+              onClick={() => setActiveCallState(prev => prev ? { ...prev, muted: !prev.muted } : null)}
+              className={`w-13 h-13 rounded-full flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-lg ${
+                activeCallState.muted ? 'bg-rose-600 text-white shadow-rose-950/60' : 'bg-slate-800 text-white hover:bg-slate-700 border border-slate-700'
+              }`}
+              title={activeCallState.muted ? 'আনমিউট করুন' : 'মিউট করুন'}
+            >
+              {activeCallState.muted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            </button>
+
+            {/* Speaker Toggle */}
+            <button
+              type="button"
+              onClick={() => setIsSpeakerActive(prev => !prev)}
+              className={`w-13 h-13 rounded-full flex flex-col items-center justify-center transition cursor-pointer active:scale-95 shadow-lg ${
+                isSpeakerActive ? 'bg-slate-800 text-emerald-400 border border-slate-700' : 'bg-slate-800 text-slate-400 border border-slate-700'
+              }`}
+              title={isSpeakerActive ? 'স্পিকার বন্ধ করুন' : 'স্পিকার চালু করুন'}
+            >
+              {isSpeakerActive ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
+            </button>
+
+            {/* End Call Button */}
+            <button
+              type="button"
+              onClick={() => setActiveCallState(null)}
+              className="w-15 h-15 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-xl shadow-rose-950/80 cursor-pointer hover:scale-105 active:scale-95 transition"
+              title="কল কেটে দিন"
+            >
+              <PhoneOff className="w-7 h-7" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ========================================================================= */
+/* EMBEDDED CHAT THREAD (Full Chat with Attachments, Voice, Meet & Offers) */
+/* ========================================================================= */
+
+interface EmbeddedChatThreadProps {
+  win: {
+    id: string;
+    senderName: string;
+    senderRole?: string;
+    senderAvatar?: string;
+    messages: Array<{
+      id: string;
+      senderName: string;
+      senderAvatar?: string;
+      isSelf: boolean;
+      text: string;
+      time: string;
+      meetLink?: string;
+    }>;
+  };
+  onBack: () => void;
+  onSend: (text: string) => void;
+  onCreateMeet: () => void;
+  onStartVoiceCall: () => void;
+  currentUserName: string;
+}
+
+const EmbeddedChatThread: React.FC<EmbeddedChatThreadProps> = ({
+  win,
+  onBack,
+  onSend,
+  onCreateMeet,
+  onStartVoiceCall
+}) => {
+  const { 
+    createCustomerProject, 
+    acceptDirectOffer, 
+    declineDirectOffer, 
+    publishDirectProjectToPublicFeed, 
+    resendDirectOffer24h, 
+    currentUser, 
+    sendChatMessage 
+  } = useData();
+
+  const [inputText, setInputText] = useState('');
+  const [showEmojis, setShowEmojis] = useState(false);
+  const [isOfferModalOpen, setIsOfferModalOpen] = useState(false);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [win.messages]);
+
+  const handleSend = (e?: React.FormEvent | React.MouseEvent) => {
+    if (e) e.preventDefault();
+    if (!inputText.trim()) return;
+    onSend(inputText.trim());
+    setInputText('');
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const sizeKb = (file.size / 1024).toFixed(1);
+    onSend(`📎 [ফাইল অ্যাটাচমেন্ট]: ${file.name} (${sizeKb} KB)`);
+    if (e.target) e.target.value = '';
+  };
+
+  const handleSendCustomOfferData = (data: {
+    title: string;
+    category: string;
+    budget: number;
+    budgetRange?: string;
+    budgetMode?: 'range' | 'fixed';
+    minBudget?: number;
+    maxBudget?: number;
+    deliveryDays: number;
+    description: string;
+    skills?: string;
+    requirements?: string[];
+    attachmentName?: string;
+    attachmentUrl?: string;
+    coverImage?: string;
+    offerType?: 'work_first' | 'paid';
+  }) => {
+    const offerId = `offer-${Date.now()}`;
+    const expiresAt = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+    const projId = `proj-${Date.now()}`;
+
+    let fullDescription = data.description.trim();
+    if (data.requirements && data.requirements.length > 0) {
+      fullDescription += `\n\n📌 প্রজেক্ট রিকোয়ারমেন্টস ও ডেলিভারেবলস:\n` + data.requirements.map((r, i) => `${i + 1}. ${r}`).join('\n');
+    }
+    if (data.skills && data.skills.trim()) {
+      fullDescription += `\n\n🏷️ স্কিলস ও কীওয়ার্ড: ${data.skills.trim()}`;
+    }
+
+    const computedRange = data.budgetRange || `৳${data.budget.toLocaleString('bn-BD')}`;
+
+    const offerMeta: DirectOfferMeta = {
+      id: offerId,
+      projectId: projId,
+      title: data.title,
+      category: data.category,
+      budget: data.budget,
+      budgetRange: computedRange,
+      deliveryDays: data.deliveryDays,
+      description: fullDescription,
+      skills: data.skills,
+      requirements: data.requirements,
+      attachmentName: data.attachmentName,
+      attachmentUrl: data.attachmentUrl,
+      coverImage: data.coverImage,
+      offerType: data.offerType || 'work_first',
+      createdAt: new Date().toISOString(),
+      expiresAt: expiresAt,
+      status: 'pending',
+      targetSellerId: win.id.replace('chat-', ''),
+      targetSellerName: win.senderName,
+      buyerId: currentUser?.id,
+      buyerName: currentUser?.name
+    };
+
+    // 1. Create CustomerProject as a 24-hour private direct offer (not public)
+    createCustomerProject({
+      customerId: currentUser?.id || `cust-${Date.now()}`,
+      customerName: currentUser?.name || 'সম্মানিত বায়ার',
+      customerEmail: currentUser?.email || 'buyer@ptenit.com',
+      customerPhone: currentUser?.mobile || '01700000000',
+      serviceTitle: data.title,
+      category: data.category,
+      description: fullDescription,
+      budgetRange: computedRange,
+      priceEstimate: data.budget,
+      deadline: new Date(Date.now() + data.deliveryDays * 86400000).toISOString().split('T')[0],
+      isDirectOffer: true,
+      targetSellerId: win.id.replace('chat-', ''),
+      targetSellerName: win.senderName,
+      expiresAt: expiresAt,
+      attachmentName: data.attachmentName || (data.coverImage ? 'কভার ছবি সংযুক্ত' : undefined),
+      attachmentUrl: data.attachmentUrl || data.coverImage || undefined,
+      offerType: data.offerType || 'work_first',
+      isWorkFirst: (data.offerType || 'work_first') === 'work_first'
+    });
+
+    try {
+      const stored = JSON.parse(localStorage.getItem('ptenit_my_buyer_post_ids') || '[]');
+      const updated = Array.from(new Set([...stored, projId, `ord-${projId}`, `ord-ptenit-${projId}`]));
+      localStorage.setItem('ptenit_my_buyer_post_ids', JSON.stringify(updated));
+    } catch {}
+
+    // 2. Send structured chat message
+    const displayMsg = `💼 [ডিরেক্ট ২৪-ঘণ্টা প্রজেক্ট অফার]\n📌 প্রজেক্ট: ${data.title}\n🏷️ ক্যাটাগরি: ${data.category}\n💰 বাজেট: ${computedRange}\n⏱️ ডেলিভারি সময়: ${data.deliveryDays} দিন\n⏳ ভ্যালিডিটি: ২৪ ঘণ্টা (অটো-রিটার্ন প্রযোজ্য)\n\n👉 সেলার ২৪ ঘণ্টার মধ্যে রিসিভ না করলে অফারটি স্বয়ংক্রিয়ভাবে বায়ারের কাছে ফেরত আসবে।`;
+
+    sendChatMessage(win.id, displayMsg, undefined, offerMeta);
+    setIsOfferModalOpen(false);
+  };
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col h-full bg-white dark:bg-[#18222D] overflow-hidden">
+      {/* TOP HEADER BAR (VISIBLE ON ALL SCREENS INCLUDING PHONE VIEW) */}
+      <div className="flex px-2.5 sm:px-4 py-2 bg-white dark:bg-[#1C2733] border-b border-slate-200/80 dark:border-slate-800 items-center justify-between shrink-0 shadow-2xs">
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Prominent Back Button */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onBack();
+            }}
+            className="p-1 -ml-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-900 dark:text-white transition cursor-pointer active:scale-95 shrink-0"
+            title="ইনবক্সে ফিরে যান"
+          >
+            <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
+          </button>
+
+          {/* Seller Avatar */}
+          <div className="relative shrink-0 p-[1.5px] rounded-full bg-gradient-to-tr from-sky-400 via-blue-500 to-cyan-400 shadow-xs">
+            <img
+              src={win.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80'}
+              alt={win.senderName}
+              className="w-8 h-8 sm:w-9 sm:h-9 rounded-full object-cover border border-white dark:border-[#1C2733]"
+            />
+            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white dark:border-[#1C2733]" />
+          </div>
+
+          {/* Seller Info */}
+          <div className="min-w-0">
+            <h3 className="text-xs sm:text-sm font-black text-slate-900 dark:text-white truncate flex items-center gap-1">
+              <span className="truncate">{win.senderName}</span>
+              <span title="ভেরিফাইড প্রোফাইল"><CheckCircle2 className="w-3.5 h-3.5 text-[#0084FF] fill-[#0084FF] text-white shrink-0" /></span>
+            </h3>
+            <p className="text-[10px] font-bold text-[#006A4E] dark:text-sky-400 flex items-center gap-1">
+              <span className="truncate">অনলাইনে আছেন</span>
+            </p>
+          </div>
+        </div>
+
+        {/* Action icons in header */}
+        <div className="flex items-center gap-1 sm:gap-2">
+          {/* Custom Offer Shortcut Button */}
+          <button
+            type="button"
+            onClick={() => setIsOfferModalOpen(true)}
+            className="hidden sm:inline-flex items-center gap-1 px-3 py-1.5 rounded-xl bg-blue-500/10 text-[#006A4E] dark:text-sky-400 border border-blue-500/30 text-xs font-black hover:bg-blue-500/20 transition cursor-pointer"
+            title="কাস্টম অফার পাঠান"
+          >
+            <Briefcase className="w-3.5 h-3.5" />
+            <span>অফার পাঠান</span>
+          </button>
+
+          {/* Google Meet Video Call */}
+          <button
+            type="button"
+            id="messenger-meet-trigger"
+            onClick={onCreateMeet}
+            className="p-2 text-[#38BDF8] hover:bg-blue-50 dark:hover:bg-slate-950/40 rounded-full transition cursor-pointer"
+            title="Google Meet ভিডিও কল"
+          >
+            <Video className="w-5 h-5" />
+          </button>
+
+          {/* Voice Call */}
+          <button
+            type="button"
+            id="messenger-phone-trigger"
+            onClick={onStartVoiceCall}
+            className="p-2 text-[#38BDF8] hover:bg-blue-50 dark:hover:bg-slate-950/40 rounded-full transition cursor-pointer"
+            title="ভয়েস কল"
+          >
+            <Phone className="w-5 h-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* MESSAGES FEED */}
+      <div 
+        className="flex-1 min-h-0 p-3 sm:p-4 overflow-y-auto space-y-3 bg-slate-50/60 dark:bg-[#101923] overscroll-contain touch-pan-y"
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
+        {/* Profile Intro Banner - hidden on phone view so profile is only shown once in the header! */}
+        <div className="hidden md:block py-5 text-center space-y-2 border-b border-slate-200/50 dark:border-slate-800/60 max-w-sm mx-auto">
+          <img
+            src={win.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80'}
+            alt={win.senderName}
+            className="w-14 h-14 rounded-full object-cover mx-auto border-2 border-white dark:border-[#1C2733] shadow-md"
+          />
+          <h4 className="text-sm sm:text-base font-black text-slate-900 dark:text-white flex items-center justify-center gap-1">
+            <span>{win.senderName}</span>
+            <span title="Verified Profile"><CheckCircle2 className="w-4 h-4 text-[#0084FF] fill-[#0084FF] text-white shrink-0" /></span>
+          </h4>
+          <div className="flex items-center justify-center gap-2 text-xs font-bold text-slate-600 dark:text-slate-300">
+            <span className="truncate">{win.senderRole || 'Pro Seller • React & Node Specialist'}</span>
+            <span className="hidden sm:flex items-center gap-1 text-slate-700 dark:text-slate-200 shrink-0 font-extrabold text-[11px] bg-slate-100 dark:bg-slate-800/80 px-1.5 py-0.5 rounded-md">
+              <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400 shrink-0" />
+              <span>4.9</span>
+            </span>
+          </div>
+        </div>
+
+        {win.messages.map((m) => (
+          <div
+            key={m.id}
+            className={`flex items-end gap-2 ${m.isSelf ? 'justify-end' : 'justify-start'}`}
+          >
+            {!m.isSelf && (
+              <img
+                src={m.senderAvatar || win.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80'}
+                alt=""
+                className="w-7 h-7 rounded-full object-cover shrink-0 mb-1"
+              />
+            )}
+
+            <div className={`flex flex-col ${m.isSelf ? 'items-end' : 'items-start'} max-w-[85%] sm:max-w-[70%]`}>
+              <div
+                className={`px-4 py-2.5 text-xs sm:text-sm leading-relaxed shadow-2xs ${
+                  m.isSelf
+                    ? 'bg-[#006A4E] text-white font-bold rounded-2xl rounded-br-xs'
+                    : 'bg-white dark:bg-[#243447] text-slate-900 dark:text-slate-100 border border-slate-200/70 dark:border-slate-700/60 rounded-2xl rounded-bl-xs'
+                }`}
+              >
+                {(() => {
+                  const directOffer = (m as any).directOffer || getDirectOfferFromMessage(m, win.senderName);
+                  if (directOffer) {
+                    return (
+                      <DirectProjectOfferChatCard
+                        offer={directOffer}
+                        isSelf={m.isSelf}
+                        currentUserId={currentUser?.id}
+                        currentUserRole={currentUser?.role}
+                        onAccept={(off) => acceptDirectOffer(off.projectId || off.orderId || win.id)}
+                        onDecline={(off) => declineDirectOffer(off.projectId || off.orderId || win.id)}
+                        onPublishToPublic={(off) => publishDirectProjectToPublicFeed(off.projectId || off.orderId || win.id)}
+                        onResend={(off) => resendDirectOffer24h(off.projectId || off.orderId || win.id)}
+                      />
+                    );
+                  }
+                  return <p className="whitespace-pre-wrap">{m.text}</p>;
+                })()}
+                {m.meetLink && (
+                  <a
+                    href={m.meetLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#006A4E] text-white text-xs font-black hover:bg-[#047857] transition shadow-xs"
+                  >
+                    <Video className="w-3.5 h-3.5 text-white" />
+                    <span>Join Google Meet Call</span>
+                  </a>
+                )}
+              </div>
+              <span className="text-[9px] text-slate-400 mt-0.5 px-1 font-semibold">
+                {m.time}
+              </span>
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      {/* BOTTOM INPUT BAR - FIXED AT BOTTOM */}
+      <div className="p-2 sm:p-3 bg-white dark:bg-[#1C2733] border-t border-slate-200/80 dark:border-slate-800 shrink-0 relative pb-[max(0.6rem,env(safe-area-inset-bottom))]">
+        {/* Emoji Selector Popup */}
+        {showEmojis && (
+          <div className="absolute bottom-16 left-4 bg-white dark:bg-[#243447] border border-slate-200 dark:border-slate-700 rounded-2xl p-2.5 shadow-2xl flex items-center gap-2 z-30 animate-in fade-in duration-100">
+            {['👍', '❤️', '🔥', '🎉', '😊', '🚀', '💼', '🤝'].map(emoji => (
+              <button
+                key={emoji}
+                type="button"
+                onClick={() => {
+                  setInputText(prev => prev + emoji);
+                  setShowEmojis(false);
+                }}
+                className="text-lg hover:scale-125 transition cursor-pointer p-1"
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <form onSubmit={handleSend} className="flex items-center gap-1 sm:gap-2 w-full max-w-full overflow-hidden">
+          {/* File attachment input hidden */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            className="hidden"
+          />
+
+          {/* 1. New Order Button */}
+          <button
+            type="button"
+            onClick={() => setIsOfferModalOpen(true)}
+            className="p-1.5 sm:p-2 text-[#38BDF8] hover:bg-blue-50 dark:hover:bg-slate-950/40 rounded-full transition cursor-pointer shrink-0 active:scale-95"
+            title="নতুন ডাইরেক্ট প্রজেক্ট অর্ডার পাঠান"
+          >
+            <ShoppingBag className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+          </button>
+
+          {/* 2. Attach file */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="p-1.5 sm:p-2 text-slate-400 hover:text-sky-400 dark:hover:text-sky-400 transition cursor-pointer shrink-0"
+            title="ফাইল বা ছবি সংযুক্ত করুন"
+          >
+            <Paperclip className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+          </button>
+
+          {/* 3. Emoji */}
+          <button
+            type="button"
+            onClick={() => setShowEmojis(!showEmojis)}
+            className="p-1.5 sm:p-2 text-slate-400 hover:text-amber-500 transition cursor-pointer shrink-0"
+            title="ইমোজি"
+          >
+            <Smile className="w-4.5 h-4.5 sm:w-5 sm:h-5" />
+          </button>
+
+          <input
+            type="text"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder="মেসেজ লিখুন..."
+            className="min-w-0 flex-1 px-2.5 sm:px-4 py-1.5 sm:py-2.5 bg-slate-100 dark:bg-slate-800/80 rounded-full text-xs sm:text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#006A4E]"
+          />
+
+          {/* Send Message Button - Always visible */}
+          <button
+            type="submit"
+            onClick={handleSend}
+            disabled={!inputText.trim()}
+            className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full cursor-pointer transition active:scale-95 shadow-xs shrink-0 flex items-center justify-center ${
+              inputText.trim()
+                ? 'bg-[#006A4E] hover:bg-[#19a34a] text-white opacity-100'
+                : 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed opacity-60'
+            }`}
+            title="পাঠান"
+          >
+            <Send className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          </button>
+        </form>
+      </div>
+
+      {/* 24-HOUR DIRECT CUSTOM PROJECT OFFER MODAL */}
+      <SendDirectOfferModal
+        isOpen={isOfferModalOpen}
+        onClose={() => setIsOfferModalOpen(false)}
+        recipientName={win.senderName}
+        recipientRole={win.senderRole}
+        recipientAvatar={win.senderAvatar}
+        onSubmit={handleSendCustomOfferData}
+      />
+    </div>
+  );
+};

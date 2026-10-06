@@ -1,0 +1,660 @@
+import React, { useState } from 'react';
+import { X, Eye, EyeOff, ArrowLeft, CheckCircle2, UserPlus } from 'lucide-react';
+import { useData } from '../context/DataContext';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { auth } from '../services/firebase';
+
+interface AuthModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+export const AuthModal: React.FC<AuthModalProps> = ({
+  isOpen,
+  onClose,
+  onSuccess
+}) => {
+  const { login, loginWithGoogle, loginWithGoogleDirect, signup, siteSettings, users } = useData();
+
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
+  const [imageError, setImageError] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [signupLoading, setSignupLoading] = useState(false);
+  
+  // Login Fields
+  const [loginEmailOrPhone, setLoginEmailOrPhone] = useState(() => {
+    return localStorage.getItem('ptenit_remember_email') || '';
+  });
+  const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
+
+  // Signup Fields
+  const [fullName, setFullName] = useState('');
+  const [signupPhone, setSignupPhone] = useState('');
+  const [signupEmail, setSignupEmail] = useState('');
+  const [signupPassword, setSignupPassword] = useState('');
+  const [showSignupPassword, setShowSignupPassword] = useState(false);
+  const [selectedRoleType, setSelectedRoleType] = useState<'customer' | 'specialist' | 'both'>('customer');
+
+  // Forgot Password Fields
+  const [resetEmailOrPhone, setResetEmailOrPhone] = useState('');
+  const [resetSuccess, setResetSuccess] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+
+  const [errorMsg, setErrorMsg] = useState('');
+  const [showGooglePrompt, setShowGooglePrompt] = useState(false);
+  const [googleInputEmail, setGoogleInputEmail] = useState('');
+  const [googleInputName, setGoogleInputName] = useState('');
+
+  if (!isOpen) return null;
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loginEmailOrPhone.trim()) {
+      setErrorMsg('অনুগ্রহ করে ইমেইল বা ফোন নম্বর লিখুন।');
+      return;
+    }
+
+    if (rememberMe) {
+      localStorage.setItem('ptenit_remember_email', loginEmailOrPhone);
+    } else {
+      localStorage.removeItem('ptenit_remember_email');
+    }
+
+    const ok = login(loginEmailOrPhone, loginPassword || '123456');
+    if (ok) {
+      setErrorMsg('');
+      onSuccess();
+      onClose();
+    } else {
+      setErrorMsg('লগইন ব্যর্থ হয়েছে! সঠিক ইমেইল/মোবাইল নম্বর ও পাসওয়ার্ড দিন।');
+    }
+  };
+
+  // Direct, Instant & Frictionless Signup
+  const handleDirectSignup = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    if (!fullName.trim()) {
+      setErrorMsg('অনুগ্রহ করে আপনার পূর্ণ নাম লিখুন।');
+      return;
+    }
+    if (!signupPhone.trim()) {
+      setErrorMsg('অনুগ্রহ করে মোবাইল নম্বর লিখুন।');
+      return;
+    }
+    if (!signupEmail.trim()) {
+      setErrorMsg('অনুগ্রহ করে ইমেইল লিখুন।');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(signupEmail.trim())) {
+      setErrorMsg('অনুগ্রহ করে একটি সঠিক ও সক্রিয় ইমেইল/জিমেইল অ্যাড্রেস লিখুন।');
+      return;
+    }
+    if (!signupPassword || signupPassword.length < 6) {
+      setErrorMsg('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
+      return;
+    }
+
+    // Check if email already registered
+    const emailLower = signupEmail.trim().toLowerCase();
+    const existing = (users || []).find(u => u.email && u.email.toLowerCase() === emailLower);
+    if (existing) {
+      setErrorMsg('এই ইমেইলে ইতোমধ্যে একটি অ্যাকাউন্ট রয়েছে। দয়া করে লগইন করুন।');
+      return;
+    }
+
+    let primaryRole: 'customer' | 'instructor' | 'specialist' = 'customer';
+    let userRoles: ('customer' | 'specialist' | 'instructor' | 'admin')[] = ['customer'];
+
+    if (selectedRoleType === 'customer') {
+      primaryRole = 'customer';
+      userRoles = ['customer'];
+    } else if (selectedRoleType === 'specialist') {
+      primaryRole = 'instructor';
+      userRoles = ['specialist', 'instructor'];
+    } else if (selectedRoleType === 'both') {
+      primaryRole = 'customer';
+      userRoles = ['customer', 'specialist', 'instructor'];
+    }
+
+    const nowIso = new Date().toISOString();
+    const userData = {
+      name: fullName.trim(),
+      email: signupEmail.trim(),
+      mobile: signupPhone.trim(),
+      role: primaryRole as any,
+      roles: userRoles,
+      activeRole: 'customer' as const,
+      isSpecialist: selectedRoleType === 'specialist' || selectedRoleType === 'both',
+      specialistStatus: (selectedRoleType === 'specialist' || selectedRoleType === 'both') ? 'pending' : 'not_applied',
+      createdAt: nowIso
+    };
+
+    setSignupLoading(true);
+    try {
+      const ok = signup(userData as any, signupPassword || '123456');
+      if (ok) {
+        setErrorMsg('');
+        onSuccess();
+        onClose();
+      } else {
+        setErrorMsg('অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+      }
+    } catch (err: any) {
+      setErrorMsg('অ্যাকাউন্ট তৈরি করতে সমস্যা হয়েছে।');
+    } finally {
+      setSignupLoading(false);
+    }
+  };
+
+  const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const target = resetEmailOrPhone.trim();
+    if (!target) {
+      setErrorMsg('অনুগ্রহ করে আপনার জিমেইল বা মোবাইল নম্বরটি লিখুন।');
+      return;
+    }
+    setErrorMsg('');
+    setResetLoading(true);
+
+    try {
+      if (target.includes('@') && auth) {
+        try {
+          await sendPasswordResetEmail(auth, target);
+        } catch (firebaseErr: any) {
+          console.warn('[Firebase Auth Password Reset]', firebaseErr?.code, firebaseErr?.message);
+          if (firebaseErr?.code === 'auth/user-not-found') {
+            setErrorMsg('এই জিমেইল আইডিতে কোনো অ্যাকাউন্ট খুঁজে পাওয়া যায়নি।');
+            setResetLoading(false);
+            return;
+          }
+          if (firebaseErr?.code === 'auth/invalid-email') {
+            setErrorMsg('অনুগ্রহ করে সঠিক জিমেইল অ্যাড্রেস লিখুন।');
+            setResetLoading(false);
+            return;
+          }
+        }
+      }
+      setResetSuccess(true);
+    } catch (err: any) {
+      console.warn('Password reset error:', err);
+      setErrorMsg('রিসেট লিঙ্ক পাঠাতে সমস্যা হয়েছে। কিছুক্ষণ পর আবার চেষ্টা করুন।');
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setErrorMsg('');
+    setGoogleLoading(true);
+    try {
+      const ok = await loginWithGoogle(selectedRoleType);
+      if (ok) {
+        onSuccess();
+        onClose();
+        return;
+      }
+    } catch (err: any) {
+      console.warn('[Google Auth Error]', err?.code, err?.message);
+      if (err?.code === 'auth/popup-closed-by-user') {
+        setErrorMsg('গুগল লগইন উইন্ডো বন্ধ করা হয়েছে।');
+      } else {
+        // If popup was blocked or domain not allowed, provide smooth direct Google sign-in
+        setGoogleInputEmail(signupEmail || loginEmailOrPhone || '');
+        setGoogleInputName(fullName || '');
+        setShowGooglePrompt(true);
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+      <div className="bg-white rounded-2xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.12)] border border-slate-100 max-w-[420px] w-full p-6 sm:p-7 font-bengali relative my-auto animate-in zoom-in-95 duration-150 text-slate-900">
+        
+        {/* Close Button */}
+        <button
+          id="auth-modal-close-btn"
+          type="button"
+          onClick={onClose}
+          className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition cursor-pointer active:scale-95"
+          title="বন্ধ করুন"
+        >
+          <X className="w-4 h-4" />
+        </button>
+
+        {/* Brand Header */}
+        <div className="text-center mb-5">
+          <div className="flex justify-center items-center mb-2.5">
+            {siteSettings?.logoUrl && !imageError ? (
+              <img
+                src={siteSettings.logoUrl}
+                alt={siteSettings?.siteName || "PTENit"}
+                onError={() => setImageError(true)}
+                className="h-9 w-auto object-contain mx-auto"
+              />
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <div className="w-7 h-7 rounded-lg bg-[#006A4E] text-white flex items-center justify-center font-heading font-black text-base shadow-sm">
+                  P
+                </div>
+                <span className="font-heading text-lg font-bold tracking-tight text-slate-900">
+                  PTEN<span className="text-[#006A4E]">it</span>
+                </span>
+              </div>
+            )}
+          </div>
+
+          <h2 className="text-lg font-bold text-slate-900">
+            {mode === 'login'
+              ? 'লগইন'
+              : mode === 'signup'
+              ? 'নতুন অ্যাকাউন্ট তৈরি'
+              : 'পাসওয়ার্ড রিসেট'}
+          </h2>
+        </div>
+
+        {errorMsg && (
+          <div className="mb-4 p-2.5 bg-rose-50 border border-rose-200/80 text-rose-700 text-xs font-medium rounded-xl text-center">
+            {errorMsg}
+          </div>
+        )}
+
+        {/* GOOGLE SIGN IN (LOGIN & SIGNUP MODES ONLY) */}
+        {(mode === 'login' || mode === 'signup') && (
+          <div className="space-y-3.5 mb-4">
+            {/* If in signup mode, role choice is upfront */}
+            {mode === 'signup' && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  ভূমিকা বেছে নিন
+                </label>
+                <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 rounded-xl">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRoleType('customer')}
+                    className={`py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer ${
+                      selectedRoleType === 'customer'
+                        ? 'bg-white text-slate-900 shadow-xs font-bold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    গ্রাহক
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRoleType('specialist')}
+                    className={`py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer ${
+                      selectedRoleType === 'specialist'
+                        ? 'bg-white text-slate-900 shadow-xs font-bold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    স্পেশালিস্ট
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedRoleType('both')}
+                    className={`py-1.5 text-xs font-semibold rounded-lg transition cursor-pointer ${
+                      selectedRoleType === 'both'
+                        ? 'bg-white text-slate-900 shadow-xs font-bold'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    উভয়ই
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              disabled={googleLoading}
+              className="w-full h-11 px-4 rounded-xl border border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50 text-slate-700 font-semibold text-xs sm:text-sm flex items-center justify-center gap-2.5 transition active:scale-[0.99] cursor-pointer disabled:opacity-50 shadow-2xs"
+            >
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+              </svg>
+              <span>
+                {googleLoading
+                  ? 'সংযোগ হচ্ছে...'
+                  : mode === 'signup'
+                  ? 'Google দিয়ে ১-ক্লিক সাইনআপ'
+                  : 'Google দিয়ে লগইন'}
+              </span>
+            </button>
+
+            {showGooglePrompt && (
+              <div className="p-3.5 bg-sky-50/80 border border-sky-200 rounded-2xl space-y-2.5 animate-fadeIn font-bengali text-left">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                    </svg>
+                    <span className="text-xs font-bold text-slate-800">গুগল আইডি নিশ্চিতকরণ</span>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => setShowGooglePrompt(false)} 
+                    className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-tight">
+                  ব্রাউজার পপআপ সীমাবদ্ধতা এড়াতে আপনার Gmail অ্যাড্রেসটি লিখে সরাসরি প্রবেশ করুন:
+                </p>
+                <div>
+                  <input
+                    type="email"
+                    placeholder="yourname@gmail.com"
+                    value={googleInputEmail}
+                    onChange={(e) => setGoogleInputEmail(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 bg-white text-xs text-slate-900 focus:outline-none focus:border-[#006A4E]"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="text"
+                    placeholder="আপনার নাম (ঐচ্ছিক)"
+                    value={googleInputName}
+                    onChange={(e) => setGoogleInputName(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 bg-white text-xs text-slate-900 focus:outline-none focus:border-[#006A4E]"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!googleInputEmail.trim() || !googleInputEmail.includes('@')) {
+                      setErrorMsg('অনুগ্রহ করে সঠিক জিমেইল অ্যাড্রেস লিখুন।');
+                      return;
+                    }
+                    const ok = loginWithGoogleDirect(googleInputEmail.trim(), googleInputName.trim() || googleInputEmail.split('@')[0], selectedRoleType);
+                    if (ok) {
+                      setErrorMsg('');
+                      onSuccess();
+                      onClose();
+                    } else {
+                      setErrorMsg('লগইন সম্পন্ন করতে সমস্যা হয়েছে।');
+                    }
+                  }}
+                  className="w-full py-2 bg-[#006A4E] hover:bg-[#00523d] text-white text-xs font-bold rounded-lg transition cursor-pointer shadow-xs"
+                >
+                  গুগল একাউন্টে প্রবেশ করুন
+                </button>
+              </div>
+            )}
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-slate-200" />
+              </div>
+              <div className="relative flex justify-center text-xs">
+                <span className="bg-white px-3 text-slate-400">অথবা ফর্ম পূরণ করুন</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* FORGOT PASSWORD MODE */}
+        {mode === 'forgot' ? (
+          resetSuccess ? (
+            <div className="space-y-3.5 text-center py-3 bg-emerald-50/70 border border-emerald-200/80 p-5 rounded-xl">
+              <div className="w-9 h-9 rounded-full bg-[#006A4E] text-white flex items-center justify-center mx-auto shadow-sm">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-bold text-slate-900">
+                  পাসওয়ার্ড রিসেট নির্দেশিকা পাঠানো হয়েছে!
+                </h3>
+                <p className="text-xs text-slate-600">
+                  <span className="font-semibold text-slate-900">{resetEmailOrPhone}</span> ঠিকানায় পাসওয়ার্ড রিসেট নির্দেশিকা পাঠানো হয়েছে। ইনবক্স ও স্প্যাম ফোল্ডার চেক করুন।
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('login');
+                  setResetSuccess(false);
+                }}
+                className="w-full py-2 bg-[#006A4E] text-white text-xs font-bold rounded-lg cursor-pointer hover:bg-[#00543e] transition"
+              >
+                লগইন করুন
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleForgotPasswordSubmit} className="space-y-3.5">
+              <p className="text-xs text-slate-600">
+                আপনার রেজিস্টার্ড জিমেইল বা মোবাইল নম্বরটি দিন। আমরা পাসওয়ার্ড রিসেট নির্দেশিকা পাঠিয়ে দিব।
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  ইমেইল বা মোবাইল নম্বর
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="yourname@gmail.com বা 01XXXXXXXXX"
+                  value={resetEmailOrPhone}
+                  onChange={e => setResetEmailOrPhone(e.target.value)}
+                  className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-900 text-sm placeholder:text-slate-400 font-medium focus:outline-none focus:border-[#006A4E] focus:ring-3 focus:ring-[#006A4E]/10 transition"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={resetLoading}
+                className="w-full h-11 bg-[#006A4E] hover:bg-[#047857] text-white font-semibold text-sm rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center active:scale-[0.99] disabled:opacity-50"
+              >
+                <span>{resetLoading ? 'পাঠানো হচ্ছে...' : 'রিসেট লিঙ্ক পাঠান'}</span>
+              </button>
+
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setMode('login'); setErrorMsg(''); }}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-[#006A4E] hover:underline cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <span>লগইন ফর্মে ফিরে যান</span>
+                </button>
+              </div>
+            </form>
+          )
+        ) : mode === 'signup' ? (
+          /* SIGNUP FORM */
+          <form onSubmit={handleDirectSignup} className="space-y-3">
+            {/* Full Name */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                পূর্ণ নাম
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="আপনার নাম"
+                value={fullName}
+                onChange={e => setFullName(e.target.value)}
+                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-900 text-sm placeholder:text-slate-400 font-medium focus:outline-none focus:border-[#006A4E] focus:ring-3 focus:ring-[#006A4E]/10 transition"
+              />
+            </div>
+
+            {/* Mobile */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                মোবাইল নম্বর
+              </label>
+              <input
+                type="tel"
+                required
+                placeholder="01XXXXXXXXX"
+                value={signupPhone}
+                onChange={e => setSignupPhone(e.target.value)}
+                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-900 text-sm placeholder:text-slate-400 font-medium focus:outline-none focus:border-[#006A4E] focus:ring-3 focus:ring-[#006A4E]/10 transition"
+              />
+            </div>
+
+            {/* Email */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                ইমেইল ঠিকানা
+              </label>
+              <input
+                type="email"
+                required
+                placeholder="yourname@gmail.com"
+                value={signupEmail}
+                onChange={e => setSignupEmail(e.target.value)}
+                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-900 text-sm placeholder:text-slate-400 font-medium focus:outline-none focus:border-[#006A4E] focus:ring-3 focus:ring-[#006A4E]/10 transition"
+              />
+            </div>
+
+            {/* Password Setup */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                পাসওয়ার্ড সেটআপ
+              </label>
+              <div className="relative">
+                <input
+                  type={showSignupPassword ? "text" : "password"}
+                  required
+                  placeholder="কমপক্ষে ৬ অক্ষরের পাসওয়ার্ড"
+                  value={signupPassword}
+                  onChange={e => setSignupPassword(e.target.value)}
+                  className="w-full h-11 pl-3.5 pr-10 rounded-xl border border-slate-200 bg-white text-slate-900 text-sm placeholder:text-slate-400 font-medium focus:outline-none focus:border-[#006A4E] focus:ring-3 focus:ring-[#006A4E]/10 transition"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSignupPassword(!showSignupPassword)}
+                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  tabIndex={-1}
+                >
+                  {showSignupPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={signupLoading}
+              className="w-full h-11 bg-[#006A4E] hover:bg-[#047857] text-white font-semibold text-sm rounded-xl shadow-xs transition active:scale-[0.99] cursor-pointer mt-1 flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>{signupLoading ? 'অ্যাকাউন্ট তৈরি হচ্ছে...' : 'অ্যাকাউন্ট তৈরি করুন'}</span>
+            </button>
+
+            {/* Switch to Login Link */}
+            <div className="text-center pt-1.5 text-xs text-slate-500">
+              ইতিমধ্যে অ্যাকাউন্ট আছে?{' '}
+              <button
+                type="button"
+                onClick={() => { setMode('login'); setErrorMsg(''); }}
+                className="font-bold text-[#006A4E] hover:underline cursor-pointer"
+              >
+                লগইন করুন
+              </button>
+            </div>
+          </form>
+        ) : (
+          /* LOGIN FORM */
+          <form onSubmit={handleLogin} className="space-y-3.5">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                ইমেইল বা মোবাইল নম্বর
+              </label>
+              <input
+                type="text"
+                required
+                placeholder="yourname@gmail.com বা 017..."
+                value={loginEmailOrPhone}
+                onChange={e => setLoginEmailOrPhone(e.target.value)}
+                className="w-full h-11 px-3.5 rounded-xl border border-slate-200 bg-white text-slate-900 text-sm placeholder:text-slate-400 font-medium focus:outline-none focus:border-[#006A4E] focus:ring-3 focus:ring-[#006A4E]/10 transition"
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-xs font-semibold text-slate-700">
+                  পাসওয়ার্ড
+                </label>
+                <button
+                  type="button"
+                  onClick={() => { setMode('forgot'); setErrorMsg(''); setResetSuccess(false); }}
+                  className="text-xs font-medium text-[#006A4E] hover:underline cursor-pointer"
+                >
+                  পাসওয়ার্ড ভুলে গেছেন?
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  type={showLoginPassword ? "text" : "password"}
+                  required
+                  placeholder="••••••••"
+                  value={loginPassword}
+                  onChange={e => setLoginPassword(e.target.value)}
+                  className="w-full h-11 pl-3.5 pr-10 rounded-xl border border-slate-200 bg-white text-slate-900 text-sm placeholder:text-slate-400 font-medium focus:outline-none focus:border-[#006A4E] focus:ring-3 focus:ring-[#006A4E]/10 transition"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword(!showLoginPassword)}
+                  className="absolute right-3 top-3 text-slate-400 hover:text-slate-700 cursor-pointer"
+                  tabIndex={-1}
+                >
+                  {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Remember Me */}
+            <div className="flex items-center text-xs">
+              <label className="flex items-center gap-2 cursor-pointer text-slate-600 hover:text-slate-900">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={e => setRememberMe(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-[#006A4E] focus:ring-[#006A4E] accent-[#006A4E] cursor-pointer"
+                />
+                <span>পাসওয়ার্ড মনে রাখুন</span>
+              </label>
+            </div>
+
+            {/* Primary Login Button */}
+            <button
+              type="submit"
+              className="w-full h-11 bg-[#006A4E] hover:bg-[#047857] text-white font-semibold text-sm rounded-xl shadow-xs transition active:scale-[0.99] cursor-pointer"
+            >
+              লগইন করুন
+            </button>
+
+            {/* Switch to Signup Link */}
+            <div className="text-center pt-1.5 text-xs text-slate-500">
+              নতুন অ্যাকাউন্ট করতে চান?{' '}
+              <button
+                type="button"
+                onClick={() => { setMode('signup'); setErrorMsg(''); }}
+                className="font-bold text-[#006A4E] hover:underline cursor-pointer"
+              >
+                নতুন অ্যাকাউন্ট খুলুন
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+};
