@@ -26,6 +26,7 @@ import {
   Trash2,
   X,
   AlertTriangle,
+  RotateCcw,
 } from "lucide-react";
 import { MarketplaceGig, User as UserType } from "../types";
 import { useData } from "../context/DataContext";
@@ -46,6 +47,7 @@ interface GigCardProps {
   toggleFavorite?: (gigId: string, e: React.MouseEvent) => void;
   deleteGig?: (gigId: string) => void;
   onEdit?: (gig: MarketplaceGig) => void;
+  onAgainPost?: (gig: MarketplaceGig) => void;
   badgeTag?: string;
   className?: string;
   layoutMode?: 'feed' | 'grid' | 'auto';
@@ -61,6 +63,7 @@ export const GigCard: React.FC<GigCardProps> = ({
   toggleFavorite,
   deleteGig,
   onEdit,
+  onAgainPost,
   badgeTag,
   className = "",
   layoutMode = 'auto',
@@ -137,17 +140,40 @@ export const GigCard: React.FC<GigCardProps> = ({
     }, 2800);
   };
 
-  const isOwner = isBuyerPost ? (
-    !effectiveUser ||
-    !gig.sellerId ||
-    gig.sellerId === effectiveUser.id ||
-    gig.sellerId === 'buyer-self' ||
-    (effectiveUser.name && gig.sellerName && gig.sellerName.toLowerCase().trim() === effectiveUser.name.toLowerCase().trim())
-  ) : !!(
-    effectiveUser && (
-      (gig.sellerId && gig.sellerId === effectiveUser.id) ||
+  const isBuyerPostOwner = Boolean(
+    isBuyerPost &&
+    effectiveUser &&
+    (
+      (gig.sellerId && gig.sellerId !== 'buyer-self' && gig.sellerId === effectiveUser.id) ||
+      ((gig as any).buyerId && (gig as any).buyerId === effectiveUser.id) ||
+      (effectiveUser.email && (gig as any).buyerEmail && (gig as any).buyerEmail.toLowerCase() === effectiveUser.email.toLowerCase()) ||
       (effectiveUser.name && gig.sellerName && gig.sellerName.toLowerCase().trim() === effectiveUser.name.toLowerCase().trim())
     )
+  );
+
+  const isOwner = isBuyerPost
+    ? isBuyerPostOwner
+    : Boolean(
+        effectiveUser &&
+        (
+          (gig.sellerId && gig.sellerId === effectiveUser.id) ||
+          (effectiveUser.name && gig.sellerName && gig.sellerName.toLowerCase().trim() === effectiveUser.name.toLowerCase().trim())
+        )
+      );
+
+  const isGigReceived = Boolean(
+    (gig as any).isReceived ||
+    (gig as any).assignedStaff ||
+    (gig as any).assignedExpert ||
+    (gig as any).status === 'in_progress' ||
+    (gig as any).orderStatus === 'in_progress' ||
+    ((gig as any).sellerName &&
+      (gig as any).sellerName !== 'সকল এক্সপার্টদের অফার রিসিভড অপেক্ষমান' &&
+      (gig as any).sellerId &&
+      (gig as any).sellerId !== 'pending_expert' &&
+      (gig as any).sellerId !== 'unassigned' &&
+      (gig as any).sellerId !== 'buyer-self' &&
+      (gig as any).sellerId !== effectiveUser?.id)
   );
   const [shareCount, setShareCount] = useState<number>(() => {
     return 5 + ((gig.id.charCodeAt(gig.id.length - 1) || 1) % 8);
@@ -444,7 +470,7 @@ export const GigCard: React.FC<GigCardProps> = ({
                 </span>
                 <span title="Verified Profile">
                   <CheckCircle2
-                    className="w-3.5 h-3.5 text-[#006A4E] fill-[#006A4E] text-white shrink-0"
+                    className="seller-verified-check w-3.5 h-3.5 text-[#006A4E] fill-[#006A4E] text-white shrink-0"
                   />
                 </span>
               </div>
@@ -499,6 +525,14 @@ export const GigCard: React.FC<GigCardProps> = ({
               </button>
             )}
 
+            {/* If Buyer Post is Received by a Seller, Show "Received" Badge in English */}
+            {isBuyerPost && isGigReceived && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1 shrink-0 animate-fadeIn shadow-2xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Received
+              </span>
+            )}
+
             {/* 3-dots More Menu */}
             <button
               type="button"
@@ -547,6 +581,24 @@ export const GigCard: React.FC<GigCardProps> = ({
                     <span>বিস্তারিত</span>
                   </button>
 
+                  {/* Again Post option: ONLY for the Buyer Post Author / Owner, NEVER for sellers */}
+                  {isBuyerPost && isBuyerPostOwner && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setIsMenuOpen(false);
+                        if (onAgainPost) {
+                          onAgainPost(gig);
+                        }
+                      }}
+                      className="w-full px-2.5 py-1.5 text-left rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 flex items-center gap-2 text-emerald-700 dark:text-emerald-400 font-bold cursor-pointer transition"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                      <span>Again Post</span>
+                    </button>
+                  )}
+
                   {isOwner ? (
                     <>
                       {onEdit && (
@@ -580,21 +632,24 @@ export const GigCard: React.FC<GigCardProps> = ({
                     </>
                   ) : (
                     <>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setIsMenuOpen(false);
-                          if (toggleFavorite) {
-                            toggleFavorite(gig.id, e);
-                          }
-                          triggerToast(!isFavorite ? "✓ পোস্টটি পছন্দের তালিকায় যোগ করা হয়েছে!" : "পোস্টটি পছন্দের তালিকা থেকে সরানো হয়েছে।");
-                        }}
-                        className="w-full px-2.5 py-1.5 text-left rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 text-slate-700 dark:text-slate-200 font-medium cursor-pointer transition"
-                      >
-                        <Heart className={`w-3.5 h-3.5 ${isFavorite ? 'text-rose-500 fill-rose-500' : 'text-slate-500 dark:text-slate-400'}`} />
-                        <span>{isFavorite ? "পছন্দের তালিকা থেকে সরান" : "পছন্দের তালিকায় রাখুন"}</span>
-                      </button>
+                      {/* Wishlist option: ONLY for regular seller gigs when buyers browse, NEVER on buyer job/project posts */}
+                      {!isBuyerPost && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setIsMenuOpen(false);
+                            if (toggleFavorite) {
+                              toggleFavorite(gig.id, e);
+                            }
+                            triggerToast(!isFavorite ? "✓ পোস্টটি পছন্দের তালিকায় যোগ করা হয়েছে!" : "পোস্টটি পছন্দের তালিকা থেকে সরানো হয়েছে।");
+                          }}
+                          className="w-full px-2.5 py-1.5 text-left rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 flex items-center gap-2 text-slate-700 dark:text-slate-200 font-medium cursor-pointer transition"
+                        >
+                          <Heart className={`w-3.5 h-3.5 ${isFavorite ? 'text-rose-500 fill-rose-500' : 'text-slate-500 dark:text-slate-400'}`} />
+                          <span>{isFavorite ? "পছন্দের তালিকা থেকে সরান" : "পছন্দের তালিকায় রাখুন"}</span>
+                        </button>
+                      )}
 
                       <div className="border-t border-slate-100 dark:border-slate-800 my-1" />
 
@@ -972,7 +1027,7 @@ export const GigCard: React.FC<GigCardProps> = ({
                     </span>
                     <span title="Verified Profile">
                       <CheckCircle2
-                        className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#006A4E] fill-[#006A4E] text-white shrink-0"
+                        className="seller-verified-check w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#006A4E] fill-[#006A4E] text-white shrink-0"
                       />
                     </span>
                   </div>

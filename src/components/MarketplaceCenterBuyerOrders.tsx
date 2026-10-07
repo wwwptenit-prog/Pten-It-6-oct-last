@@ -12,10 +12,12 @@ import {
   Eye, 
   ExternalLink,
   ChevronRight,
-  Globe
+  Globe,
+  DollarSign
 } from 'lucide-react';
 import { MarketplaceOrder } from '../types';
 import { useData } from '../context/DataContext';
+import { isWorkFirstOrder } from '../utils/marketplaceOrder';
 
 interface MarketplaceCenterBuyerOrdersProps {
   orders: MarketplaceOrder[];
@@ -25,6 +27,7 @@ interface MarketplaceCenterBuyerOrdersProps {
   onBack: () => void;
   onOpenChat?: (chatData: { id: string; senderName: string; senderAvatar?: string; initialMessage?: string }) => void;
   onViewOrderDetails?: (order: MarketplaceOrder) => void;
+  onPayOutstandingBill?: (order: MarketplaceOrder) => void;
   onBrowseGigs?: () => void;
 }
 
@@ -36,10 +39,11 @@ export const MarketplaceCenterBuyerOrders: React.FC<MarketplaceCenterBuyerOrders
   onBack,
   onOpenChat,
   onViewOrderDetails,
+  onPayOutstandingBill,
   onBrowseGigs
 }) => {
   const { publishDirectProjectToPublicFeed, resendDirectOffer24h } = useData();
-  const [statusFilter, setStatusFilter] = useState<'in_progress' | 'in_review' | 'completed'>('in_progress');
+  const [statusFilter, setStatusFilter] = useState<'pending' | 'in_progress' | 'in_review' | 'completed'>('pending');
 
   // Filter orders by status
   const filteredOrders = useMemo(() => {
@@ -48,11 +52,14 @@ export const MarketplaceCenterBuyerOrders: React.FC<MarketplaceCenterBuyerOrders
       if (!order || !order.id) return false;
       if (seen.has(order.id)) return false;
       seen.add(order.id);
-      if (statusFilter === 'in_progress') {
-        const isInProgress = order.status === 'in_progress' || (order.status as string) === 'active' || order.status === 'pending';
+      if (statusFilter === 'pending') {
+        const isPending = order.status === 'pending' || order.status === 'pending_approval' || (Boolean((order as any).isReceived) && order.status !== 'in_progress');
+        if (!isPending) return false;
+      } else if (statusFilter === 'in_progress') {
+        const isInProgress = order.status === 'in_progress' || (order.status as string) === 'active';
         if (!isInProgress) return false;
       } else if (statusFilter === 'in_review') {
-        const isInReview = order.status === 'in_review' || (order.status as string) === 'review' || order.status === 'pending_approval' || (order.status as string) === 'revision';
+        const isInReview = order.status === 'in_review' || (order.status as string) === 'review' || (order.status as string) === 'revision_requested' || (order.status as string) === 'revision';
         if (!isInReview) return false;
       } else if (statusFilter === 'completed') {
         if (order.status !== 'completed' && order.status !== 'cancelled') return false;
@@ -67,6 +74,22 @@ export const MarketplaceCenterBuyerOrders: React.FC<MarketplaceCenterBuyerOrders
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[11px] font-bold border border-amber-300 dark:border-amber-800 animate-pulse">
           <Clock className="w-3 h-3 text-amber-600 dark:text-amber-400" />
           ২৪h উত্তীর্ণ • অটো ফেরত
+        </span>
+      );
+    }
+    if (isWorkFirstOrder(order) && order.status === 'in_review' && order.paymentStatus === 'pending') {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-sky-100 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 text-[11px] font-bold border border-sky-300 dark:border-sky-800">
+          <Clock className="w-3 h-3" />
+          বকেয়া বিল যাচাই হচ্ছে
+        </span>
+      );
+    }
+    if (isWorkFirstOrder(order) && order.status === 'in_review' && !order.isWorkFirstPaid) {
+      return (
+        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[11px] font-bold border border-amber-300 dark:border-amber-800">
+          <AlertCircle className="w-3 h-3" />
+          কাজ সম্পন্ন • বকেয়া বিল
         </span>
       );
     }
@@ -150,13 +173,22 @@ export const MarketplaceCenterBuyerOrders: React.FC<MarketplaceCenterBuyerOrders
           </button>
         </div>
 
-        {/* Status Filter Tabs: Strictly 3 (চলমান, রিভিউ, সম্পন্ন) */}
-        <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
+        {/* Status Filter Tabs: 4-Column Grid (পেন্ডিং, চলমান, রিভিউ, সম্পন্ন) */}
+        <div className="grid grid-cols-4 gap-1.5 sm:gap-2">
           {[
+            {
+              id: 'pending',
+              label: 'পেন্ডিং',
+              count: orders.filter(o => o.status === 'pending' || o.status === 'pending_approval' || (Boolean((o as any).isReceived) && o.status !== 'in_progress')).length,
+              activeClass: 'bg-amber-600 text-white shadow-xs font-black',
+              inactiveClass: 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50',
+              badgeActive: 'bg-black/20 text-white',
+              badgeInactive: 'bg-amber-200/70 dark:bg-amber-900 text-amber-900 dark:text-amber-200'
+            },
             {
               id: 'in_progress',
               label: 'চলমান',
-              count: orders.filter(o => o.status === 'in_progress' || (o.status as string) === 'active' || o.status === 'pending').length,
+              count: orders.filter(o => o.status === 'in_progress' || (o.status as string) === 'active').length,
               activeClass: 'bg-blue-600 text-white shadow-xs font-black',
               inactiveClass: 'bg-blue-50 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/50',
               badgeActive: 'bg-black/20 text-white',
@@ -165,11 +197,11 @@ export const MarketplaceCenterBuyerOrders: React.FC<MarketplaceCenterBuyerOrders
             {
               id: 'in_review',
               label: 'রিভিউ',
-              count: orders.filter(o => o.status === 'in_review' || (o.status as string) === 'review' || o.status === 'pending_approval' || (o.status as string) === 'revision').length,
-              activeClass: 'bg-amber-500 text-white shadow-xs font-black',
-              inactiveClass: 'bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50',
+              count: orders.filter(o => o.status === 'in_review' || (o.status as string) === 'review' || (o.status as string) === 'revision_requested' || (o.status as string) === 'revision').length,
+              activeClass: 'bg-purple-600 text-white shadow-xs font-black',
+              inactiveClass: 'bg-purple-50 dark:bg-purple-950/40 text-purple-800 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/50',
               badgeActive: 'bg-black/20 text-white',
-              badgeInactive: 'bg-amber-200/70 dark:bg-amber-900 text-amber-900 dark:text-amber-200'
+              badgeInactive: 'bg-purple-200/70 dark:bg-purple-900 text-purple-900 dark:text-purple-200'
             },
             {
               id: 'completed',
@@ -242,11 +274,14 @@ export const MarketplaceCenterBuyerOrders: React.FC<MarketplaceCenterBuyerOrders
         <div className="space-y-3">
           {filteredOrders.map((order, idx) => {
             const isTargetMatched = searchQuery && (order.id || '').toLowerCase().includes(searchQuery.toLowerCase().trim());
+            const isWorkFirst = isWorkFirstOrder(order);
+            const paymentPending = order.paymentStatus === 'pending';
+            const hasOutstandingBill = isWorkFirst && order.status === 'in_review' && !order.isWorkFirstPaid && !paymentPending;
 
             return (
               <div
                 key={`${order.id}-${idx}`}
-                className={`bg-white dark:bg-slate-900 border rounded-2xl p-4 sm:p-5 transition shadow-2xs space-y-3 ${
+                className={`bg-white dark:bg-slate-900 border rounded-2xl p-3 sm:p-5 transition shadow-2xs space-y-3 ${
                   isTargetMatched
                     ? 'border-[#006A4E] ring-2 ring-[#006A4E]/20 shadow-md'
                     : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
@@ -264,9 +299,13 @@ export const MarketplaceCenterBuyerOrders: React.FC<MarketplaceCenterBuyerOrders
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-black text-[#006A4E] dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800/60 flex items-center gap-1">
-                      <ShieldCheck className="w-3.5 h-3.5" />
-                      ৳{((order as any).totalAmount || (order as any).price || (order as any).budget || 0).toLocaleString()} এসক্রো
+                    <span className={`text-xs font-black px-2 py-0.5 rounded-md border flex items-center gap-1 ${
+                      hasOutstandingBill
+                        ? 'text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60'
+                        : 'text-[#006A4E] dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/60'
+                    }`}>
+                      {hasOutstandingBill ? <AlertCircle className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                      ৳{order.amount.toLocaleString('bn-BD')} {hasOutstandingBill ? 'বকেয়া বিল' : isWorkFirst ? (order.isWorkFirstPaid ? 'পরিশোধিত' : paymentPending ? 'যাচাই অপেক্ষমাণ' : 'কাজ শেষে বিল') : 'এসক্রো'}
                     </span>
                     {getStatusBadge(order)}
                   </div>
@@ -335,7 +374,18 @@ export const MarketplaceCenterBuyerOrders: React.FC<MarketplaceCenterBuyerOrders
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                    {hasOutstandingBill && onPayOutstandingBill && (
+                      <button
+                        type="button"
+                        onClick={() => onPayOutstandingBill(order)}
+                        className="min-h-10 flex-1 sm:flex-none px-3 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-black rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+                        title="PTENit-এ বকেয়া বিল পরিশোধ করুন"
+                      >
+                        <DollarSign className="w-3.5 h-3.5" />
+                        <span>বকেয়া বিল পরিশোধ</span>
+                      </button>
+                    )}
                     {onOpenChat && (
                       <button
                         type="button"
@@ -345,7 +395,7 @@ export const MarketplaceCenterBuyerOrders: React.FC<MarketplaceCenterBuyerOrders
                           senderAvatar: order.sellerAvatar,
                           initialMessage: `হ্যালো, আমার অর্ডার #${order.id} সংক্রান্ত বিষয়ে আপডেট প্রয়োজন।`
                         })}
-                        className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer active:scale-95"
+                        className="min-h-10 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
                         title="সেলারকে মেসেজ দিন"
                       >
                         <MessageSquare className="w-3.5 h-3.5 text-[#006A4E]" />
@@ -356,7 +406,7 @@ export const MarketplaceCenterBuyerOrders: React.FC<MarketplaceCenterBuyerOrders
                       <button
                         type="button"
                         onClick={() => onViewOrderDetails(order)}
-                        className="px-3 py-1.5 bg-[#006A4E] hover:bg-[#00543E] text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-2xs"
+                        className="min-h-10 px-3 py-2 bg-[#006A4E] hover:bg-[#00543E] text-white text-xs font-bold rounded-xl transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 shadow-2xs"
                         title="অর্ডার বিস্তারিত ও ওয়ার্কস্পেস"
                       >
                         <Eye className="w-3.5 h-3.5 text-white" />

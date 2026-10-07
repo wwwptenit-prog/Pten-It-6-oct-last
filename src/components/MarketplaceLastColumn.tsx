@@ -1,5 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useData } from '../context/DataContext';
+import { isDirectMessageVisibleToUser, isNotificationVisibleToUser } from '../utils/marketplaceModeScope';
+import { getDirectConversationId } from '../utils/marketplaceModeScope';
 import {
   Mail,
   Bell,
@@ -46,6 +48,8 @@ interface ConversationItem {
   onlineTimeAgo?: string;
   category?: string;
   orderId?: string;
+  targetUserId?: string;
+  targetUserEmail?: string;
 }
 
 export const MarketplaceLastColumn: React.FC<MarketplaceLastColumnProps> = ({
@@ -57,6 +61,7 @@ export const MarketplaceLastColumn: React.FC<MarketplaceLastColumnProps> = ({
 }) => {
   const {
     currentUser,
+    users,
     notifications,
     markNotificationRead,
     markAllNotificationsRead,
@@ -65,6 +70,7 @@ export const MarketplaceLastColumn: React.FC<MarketplaceLastColumnProps> = ({
     activeChatWindows,
     openChatWindow,
     directMessages,
+    deleteDirectMessage,
     markDirectMessageRead,
     markConversationRead,
     activeMessengerConversationId,
@@ -77,8 +83,10 @@ export const MarketplaceLastColumn: React.FC<MarketplaceLastColumnProps> = ({
     setRightColumnView
   } = useData();
 
-  const unreadMarketplaceMsgCount = (directMessages || []).filter(m => !m.read).length;
-  const roleScopedNotifications = notifications || [];
+  const unreadMarketplaceMsgCount = !currentUser
+    ? 0
+    : (directMessages || []).filter(m => !m.read && isDirectMessageVisibleToUser(m, currentUser, isSellerMode ? 'selling' : 'buying')).length;
+  const roleScopedNotifications = !currentUser ? [] : (notifications || []).filter(n => isNotificationVisibleToUser(n, currentUser, isSellerMode ? 'selling' : 'buying'));
 
   // Search & Filter State
   const [msgSearchQuery, setMsgSearchQuery] = useState('');
@@ -92,6 +100,7 @@ export const MarketplaceLastColumn: React.FC<MarketplaceLastColumnProps> = ({
 
     // 1. Convert active chat windows to conversations
     (activeChatWindows || []).forEach(w => {
+      if (w.mode && w.mode !== 'all' && w.mode !== (isSellerMode ? 'selling' : 'buying')) return;
       const isRead = readConversationIds && readConversationIds.includes(w.id);
       map.set(w.id, {
         id: w.id,
@@ -105,47 +114,47 @@ export const MarketplaceLastColumn: React.FC<MarketplaceLastColumnProps> = ({
         time: w.messages[w.messages.length - 1]?.time || 'এইমাত্র',
         unreadCount: isRead ? 0 : 0,
         isOnline: true,
-        category: isSellerMode ? 'orders' : 'sellers'
+        category: isSellerMode ? 'orders' : 'sellers',
+        targetUserId: w.targetUserId,
+        targetUserEmail: w.targetUserEmail
       });
     });
 
     // 2. Add real directMessages for current user or scoped (No cross-user leakage)
     if (directMessages && directMessages.length > 0 && currentUser) {
+      const grouped = new Map<string, typeof directMessages>();
       directMessages.forEach(dm => {
-        const isParticipant =
-          dm.recipientId === currentUser.id ||
-          dm.senderId === currentUser.id ||
-          (currentUser.email && (dm.recipientEmail?.toLowerCase() === currentUser.email.toLowerCase() || dm.senderEmail?.toLowerCase() === currentUser.email.toLowerCase())) ||
-          currentUser.role === 'admin';
-
-        if (!isParticipant) return;
-
-        const isDmRead = dm.read || (readConversationIds && readConversationIds.includes(dm.id));
-        if (map.has(dm.id)) {
-          const item = map.get(dm.id)!;
-          item.lastMessage = (dm as any).message || dm.text;
-          item.time = dm.time || 'এইমাত্র';
-          item.unreadCount = isDmRead ? 0 : (dm.unreadCount || 1);
-        } else {
-          map.set(dm.id, {
-            id: dm.id,
-            name: dm.senderName || 'ইউজার',
-            avatar: dm.senderAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=120&q=80',
-            role: dm.senderRole || (isSellerMode ? 'বায়ার' : 'সেলার'),
-            badge: isSellerMode ? 'Buyer' : 'Seller',
-            lastMessage: (dm as any).message || dm.text,
-            time: dm.time || 'এইমাত্র',
-            unreadCount: isDmRead ? 0 : (dm.unreadCount || 1),
-            isOnline: true,
-            category: dm.category || (isSellerMode ? 'orders' : 'sellers'),
-            orderId: dm.orderId
-          });
-        }
+        if (!isDirectMessageVisibleToUser(dm, currentUser, isSellerMode ? 'selling' : 'buying')) return;
+        const otherId = dm.senderId === currentUser.id ? dm.recipientId : dm.senderId;
+        const id = dm.conversationId || (otherId ? getDirectConversationId(currentUser.id, otherId, dm.orderId) : dm.id);
+        grouped.set(id, [...(grouped.get(id) || []), dm]);
+      });
+      grouped.forEach((messages, id) => {
+        const latest = [...messages].sort((a, b) => (b.time || '').localeCompare(a.time || ''))[0];
+        const otherId = latest.senderId === currentUser.id ? latest.recipientId : latest.senderId;
+        const otherUser = users.find(user => user.id === otherId);
+        const isDmRead = messages.every(message => message.read || (readConversationIds && readConversationIds.includes(message.id)));
+        const previous = map.get(id);
+        map.set(id, {
+          id,
+          name: otherUser?.name || (latest.senderId === currentUser.id ? latest.recipientEmail : latest.senderName) || 'ইউজার',
+          avatar: otherUser?.avatar || latest.senderAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=120&q=80',
+          role: otherUser?.role || latest.senderRole || (isSellerMode ? 'বায়ার' : 'সেলার'),
+          badge: isSellerMode ? 'Buyer' : 'Seller',
+          lastMessage: latest.text,
+          time: latest.time || 'এইমাত্র',
+          unreadCount: previous?.unreadCount || (isDmRead ? 0 : messages.filter(message => message.recipientId === currentUser.id && !message.read).length),
+          isOnline: true,
+          category: latest.category || (latest.orderId ? 'orders' : (isSellerMode ? 'orders' : 'sellers')),
+          orderId: latest.orderId,
+          targetUserId: otherId,
+          targetUserEmail: otherUser?.email || (latest.senderId === currentUser.id ? latest.recipientEmail : latest.senderEmail)
+        });
       });
     }
 
     return Array.from(map.values());
-  }, [activeChatWindows, directMessages, readConversationIds, isSellerMode, currentUser]);
+  }, [activeChatWindows, directMessages, readConversationIds, isSellerMode, currentUser, users]);
 
   // Filter conversations
   const filteredConversations = useMemo(() => {
@@ -167,27 +176,8 @@ export const MarketplaceLastColumn: React.FC<MarketplaceLastColumnProps> = ({
 
   // Notifications strictly scoped to isSellerMode
   const effectiveNotifications = useMemo(() => {
-    const list = roleScopedNotifications || notifications || [];
-    return list.filter((n: any) => {
-      if (n.mode === 'selling') return isSellerMode;
-      if (n.mode === 'buying') return !isSellerMode;
-      if (n.recipientRole) {
-        if (n.recipientRole === 'all') return true;
-        return isSellerMode ? n.recipientRole === 'seller' : n.recipientRole === 'buyer';
-      }
-      const cat = (n.category || '').toLowerCase();
-      const title = (n.title || '').toLowerCase();
-      const isSellerSpecific = cat === 'seller' || cat === 'payout' || title.includes('সেলার') || title.includes('উইথড্র') || title.includes('ক্লাইন্ট') || title.includes('ক্লায়েন্ট');
-      const isBuyerSpecific = cat === 'buyer' || cat === 'course' || title.includes('বায়ার') || title.includes('কোর্স') || title.includes('অ্যাসাইনমেন্ট');
-      if (isSellerMode) {
-        if (isBuyerSpecific && !isSellerSpecific) return false;
-        return true;
-      } else {
-        if (isSellerSpecific && !isBuyerSpecific) return false;
-        return true;
-      }
-    });
-  }, [roleScopedNotifications, notifications, isSellerMode]);
+    return roleScopedNotifications;
+  }, [roleScopedNotifications]);
 
   const unreadNotifCount = effectiveNotifications.filter((n: any) => !n.read).length;
 
@@ -241,7 +231,8 @@ export const MarketplaceLastColumn: React.FC<MarketplaceLastColumnProps> = ({
         senderName: item.name,
         senderRole: item.role,
         senderAvatar: item.avatar,
-        initialMessage: item.lastMessage
+        targetUserId: item.targetUserId,
+        targetUserEmail: item.targetUserEmail
       });
     }
   };
@@ -467,9 +458,25 @@ export const MarketplaceLastColumn: React.FC<MarketplaceLastColumnProps> = ({
                       <h5 className={`text-xs font-bold truncate ${hasUnread ? 'text-slate-900 dark:text-white' : 'text-slate-800 dark:text-slate-200'}`}>
                         {item.name}
                       </h5>
-                      <span className="text-[10px] text-slate-400 shrink-0 font-mono">
-                        {item.time}
-                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-[10px] text-slate-400 font-mono">
+                          {item.time}
+                        </span>
+                        {directMessages.some(message => message.id === item.id) && (
+                          <button
+                            type="button"
+                            onClick={event => {
+                              event.stopPropagation();
+                              deleteDirectMessage(item.id);
+                            }}
+                            className="p-1 text-slate-400 hover:text-rose-500 rounded-md hover:bg-slate-100 dark:hover:bg-slate-800"
+                            title="মেসেজ মুছুন"
+                            aria-label="মেসেজ মুছুন"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">

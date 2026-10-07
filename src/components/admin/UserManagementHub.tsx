@@ -40,6 +40,27 @@ interface UserManagementHubProps {
   onSelectTab?: (tab: string) => void;
 }
 
+const isTeacherUser = (user: User) =>
+  user.isMentor === true ||
+  user.mentorStatus === 'approved' ||
+  user.mentorApplication?.status === 'approved' ||
+  (user.role === 'instructor' &&
+    user.specialistStatus !== 'pending' &&
+    user.specialistApplication?.status !== 'pending' &&
+    user.sellerStatus !== 'pending');
+
+const isSellerUser = (user: User) =>
+  user.isSeller === true ||
+  user.isSpecialist === true ||
+  user.role === 'specialist' ||
+  user.roles?.includes('specialist') === true ||
+  user.sellerStatus === 'approved' ||
+  user.specialistStatus === 'approved';
+
+const isBuyerUser = (user: User) =>
+  user.role === 'customer' ||
+  user.roles?.includes('customer') === true;
+
 export const UserManagementHub: React.FC<UserManagementHubProps> = ({ 
   initialTab = 'teacher_seller',
   activeTab,
@@ -127,35 +148,28 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
   const teacherSellers = useMemo(() => {
     return (users || []).filter(u => {
       if (!u || u.role === 'admin') return false;
-      const isTeacher = u.role === 'instructor' || u.isMentor === true;
-      return isTeacher;
+      return isTeacherUser(u) && isSellerUser(u);
     });
   }, [users]);
 
   const justSellers = useMemo(() => {
     return (users || []).filter(u => {
       if (!u || u.role === 'admin') return false;
-      const isTeacher = u.role === 'instructor' || u.isMentor === true;
-      const isSeller = u.isSeller === true || u.role === 'specialist' || u.sellerStatus === 'approved';
-      return isSeller && !isTeacher;
+      return isSellerUser(u) && !isTeacherUser(u);
     });
   }, [users]);
 
   const trainees = useMemo(() => {
     return (users || []).filter(u => {
       if (!u || u.role === 'admin') return false;
-      const isTeacher = u.role === 'instructor' || u.isMentor === true;
-      const isSeller = u.isSeller === true || u.role === 'specialist';
-      return u.role === 'student' || (!isTeacher && !isSeller && u.role !== 'customer');
+      return u.role === 'student';
     });
   }, [users]);
 
   const buyers = useMemo(() => {
     return (users || []).filter(u => {
       if (!u || u.role === 'admin') return false;
-      const isTeacher = u.role === 'instructor' || u.isMentor === true;
-      const isSeller = u.isSeller === true || u.role === 'specialist' || u.sellerStatus === 'approved';
-      return u.role === 'customer' || u.role === 'buyer' || u.marketplaceMode === 'buying' || (!isTeacher && !isSeller && u.role !== 'student');
+      return isBuyerUser(u);
     });
   }, [users]);
 
@@ -164,7 +178,9 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
       u && (
         u.mentorStatus === 'pending' || 
         u.specialistStatus === 'pending' || 
-        u.mentorApplication?.status === 'pending'
+        u.mentorApplication?.status === 'pending' ||
+        u.sellerStatus === 'pending' ||
+        u.specialistApplication?.status === 'pending'
       )
     );
   }, [users]);
@@ -213,7 +229,7 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
     } else if (statusFilter === 'restricted') {
       list = list.filter(u => u.blocked || u.isRestricted);
     } else if (statusFilter === 'pending') {
-      list = list.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending');
+      list = list.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending' || u.sellerStatus === 'pending' || u.specialistApplication?.status === 'pending');
     }
 
     // Always sort with newest registered users first
@@ -243,7 +259,10 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
         title: '⚠️ অ্যাকাউন্ট রেস্ট্রিকশন নোটিশ',
         message: `প্রশাসনিক তদন্ত ও অভিযোগের পরিপ্রেক্ষিতে আপনার অ্যাকাউন্ট রেস্ট্রিক্ট করা হয়েছে। কারণ: ${fullReason}। সহায়তার জন্য সাপোর্টে যোগাযোগ করুন।`,
         type: 'warning',
-        category: 'system'
+        category: 'system',
+        recipientId: restrictionModalUser.id,
+        recipientEmail: restrictionModalUser.email,
+        mode: 'all'
       });
     }
 
@@ -258,7 +277,10 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
       title: '✅ অ্যাকাউন্ট পুনরায় সক্রিয় করা হয়েছে',
       message: `${user.name}-এর অ্যাকাউন্টের সকল রেস্ট্রিকশন প্রত্যাহার করে পুনরায় সক্রিয় করা হয়েছে।`,
       type: 'info',
-      category: 'system'
+      category: 'system',
+      recipientId: user.id,
+      recipientEmail: user.email,
+      mode: 'all'
     });
   };
 
@@ -271,7 +293,10 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
       title: '⚠️ পিটেন আইটি এডমিন সতর্কতা নোটিশ',
       message: `${warningMessage.trim()} - পিটেন আইটি প্রশাসন`,
       type: 'warning',
-      category: 'system'
+      category: 'system',
+      recipientId: warningModalUser.id,
+      recipientEmail: warningModalUser.email,
+      mode: 'all'
     });
 
     playAppSound('notification');
@@ -307,11 +332,18 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
     e.preventDefault();
     if (!bulkWarningText.trim() || selectedUserIds.length === 0) return;
 
-    sendCentralNotification({
-      title: '⚠️ পিটেন আইটি গণ-সতর্কতা নোটিশ',
-      message: `${bulkWarningText.trim()} - পিটেন আইটি প্রশাসন`,
-      type: 'warning',
-      category: 'system'
+    selectedUserIds.forEach(userId => {
+      const recipient = users.find(user => user.id === userId);
+      if (!recipient) return;
+      sendCentralNotification({
+        title: '⚠️ পিটেন আইটি গণ-সতর্কতা নোটিশ',
+        message: `${bulkWarningText.trim()} - পিটেন আইটি প্রশাসন`,
+        type: 'warning',
+        category: 'system',
+        recipientId: recipient.id,
+        recipientEmail: recipient.email,
+        mode: 'all'
+      });
     });
 
     playAppSound('notification');
@@ -377,28 +409,6 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
         </div>
       )}
 
-      {/* HEADER BANNER - UNIFIED ENTERPRISE DESIGN */}
-      <div className="bg-slate-900 border border-slate-800 p-4 sm:p-6 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <div className="p-2.5 bg-amber-500/10 rounded-xl text-amber-400 border border-amber-500/20">
-              <Users className="w-6 h-6" />
-            </div>
-            <div>
-              <h1 className="text-base sm:text-xl font-bold text-white flex items-center gap-2">
-                <span>ইউজার ডিরেক্টরি</span>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-mono font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                  {users.length} জন
-                </span>
-              </h1>
-              <p className="text-xs text-slate-400 font-normal mt-0.5">
-                সকল ইউজার প্রোফাইল মনিটরিং ও পারমিশন কন্ট্রোল।
-              </p>
-            </div>
-          </div>
-        </div>
-
-      </div>
 
       {/* SEARCH, STATUS FILTER & TOOLBAR */}
       <div className="bg-slate-900 border border-slate-800 p-3.5 sm:p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3">
@@ -564,9 +574,9 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {activeTabList.map(user => {
             const isBlocked = user.blocked === true || user.isRestricted === true;
-            const isPending = user.mentorStatus === 'pending' || user.specialistStatus === 'pending' || user.mentorApplication?.status === 'pending';
-            const isTeacher = user.role === 'instructor' || user.isMentor === true;
-            const isSeller = user.isSeller === true || user.role === 'specialist';
+            const isPending = user.mentorStatus === 'pending' || user.specialistStatus === 'pending' || user.mentorApplication?.status === 'pending' || user.sellerStatus === 'pending' || user.specialistApplication?.status === 'pending';
+            const userIsTeacher = isTeacherUser(user);
+            const userIsSeller = isSellerUser(user);
             const isSelected = selectedUserIds.includes(user.id);
             
             // Related stats
@@ -614,7 +624,7 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
                           ? 'border-rose-500 grayscale'
                           : isPending
                           ? 'border-amber-400'
-                          : isTeacher
+                          : userIsTeacher
                           ? 'border-sky-400'
                           : 'border-purple-400'
                       }`}
@@ -624,22 +634,22 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
                         <h3 className="font-bold text-sm sm:text-base text-white truncate">
                           {user.name}
                         </h3>
-                        {isTeacher && (
+                        {userIsTeacher && (
                           <span className="px-2 py-0.2 rounded-md text-[9px] font-black bg-blue-500/20 text-sky-300 border border-blue-500/40">
                             টিচার
                           </span>
                         )}
-                        {isSeller && (
+                        {userIsSeller && (
                           <span className="px-2 py-0.2 rounded-md text-[9px] font-black bg-purple-500/20 text-purple-300 border border-purple-500/40">
                             সেলার
                           </span>
                         )}
-                        {user.role === 'student' && !isTeacher && !isSeller && (
+                        {user.role === 'student' && !userIsTeacher && !userIsSeller && (
                           <span className="px-2 py-0.2 rounded-md text-[9px] font-black bg-sky-500/20 text-sky-300 border border-sky-500/40">
                             প্রশিক্ষণার্থী
                           </span>
                         )}
-                        {user.role === 'customer' && !isTeacher && !isSeller && (
+                        {isBuyerUser(user) && !userIsTeacher && !userIsSeller && (
                           <span className="px-2 py-0.2 rounded-md text-[9px] font-black bg-blue-500/20 text-blue-300 border border-blue-500/40">
                             বায়ার / ক্লায়েন্ট
                           </span>
@@ -755,13 +765,13 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
 
                 {/* Platform Summary Metrics */}
                 <div className="flex items-center gap-3 pt-1 text-[11px] text-slate-400 border-t border-slate-800/60 flex-wrap">
-                  {isTeacher && (
+                  {userIsTeacher && (
                     <span className="flex items-center gap-1 text-slate-300 font-medium">
                       <BookOpen className="w-3.5 h-3.5 text-sky-400" />
                       পরিচালিত কোর্স: <strong className="text-sky-400 font-mono">{userCoursesCount}</strong>
                     </span>
                   )}
-                  {isSeller && (
+                  {userIsSeller && (
                     <span className="flex items-center gap-1 text-slate-300 font-medium">
                       <ShoppingBag className="w-3.5 h-3.5 text-purple-400" />
                       লাইভ গিগস: <strong className="text-purple-400 font-mono">{userGigsCount}</strong>
@@ -779,10 +789,14 @@ export const UserManagementHub: React.FC<UserManagementHubProps> = ({
                     <>
                       <button
                         type="button"
-                        onClick={() => {
-                          approveMentorApplication(user.id);
+                        onClick={async () => {
+                          const approved = await approveMentorApplication(user.id);
+                          if (!approved) {
+                            showActionToast('অনুমোদন সংরক্ষণ হয়নি। Firestore সংযোগ/পারমিশন পরীক্ষা করুন।', 'warning');
+                            return;
+                          }
                           playAppSound('success');
-                          showActionToast(`${user.name}-কে সফলভাবে টিচার ও মেন্টর হিসেবে অনুমোদন প্রদান করা হয়েছে!`, 'success');
+                          showActionToast(`${user.name}-এর সেলার/মেন্টর আবেদন অনুমোদিত হয়েছে!`, 'success');
                         }}
                         className="px-3 py-1.5 rounded-xl bg-[#047857] hover:bg-blue-500 text-white font-bold text-xs shadow-md cursor-pointer transition flex items-center gap-1 active:scale-95"
                       >

@@ -452,6 +452,253 @@ p, span, li, a, button, label {
   display: none;
 }
 
+html.marketplace-seller-mode {
+  --seller-accent: #0084FF;
+  --seller-accent-hover: #0073e6;
+  --seller-accent-soft: rgba(0, 132, 255, 0.12);
+  --seller-accent-border: rgba(0, 132, 255, 0.35);
+}
+
+html.marketplace-seller-mode #marketplace-top {
+  font-family: 'Noto Sans Bengali', 'Plus Jakarta Sans', 'Hind Siliguri', system-ui, sans-serif;
+  font-size: 14px;
+}
+
+html.marketplace-seller-mode #marketplace-top [class*="text-[9px]"],
+html.marketplace-seller-mode #marketplace-top [class*="text-[10px]"] {
+  font-size: 11px !important;
+  line-height: 1.4 !important;
+}
+
+html.marketplace-seller-mode #marketplace-top [class*="text-[11px]"] {
+  font-size: 12px !important;
+  line-height: 1.45 !important;
+}
+
+html.marketplace-seller-mode [class*="bg-[#006A4E]"],
+html.marketplace-seller-mode [class*="bg-[#00543e]"],
+html.marketplace-seller-mode [class*="bg-[#00523d]"],
+html.marketplace-seller-mode [class*="bg-[#00543D]"],
+html.marketplace-seller-mode [class*="bg-[#00543d]"],
+html.marketplace-seller-mode [class*="bg-[#004D38]"],
+html.marketplace-seller-mode [class*="bg-[#004d38]"],
+html.marketplace-seller-mode [class*="bg-[#006A4e]"],
+html.marketplace-seller-mode [class*="bg-[#E11D48]"],
+html.marketplace-seller-mode [class*="bg-[#BE123C]"],
+html.marketplace-seller-mode [class*="bg-[#9F1239]"] {
+  background-color: var(--seller-accent) !important;
+}
+
+html.marketplace-seller-mode [class*="bg-green-500"],
+html.marketplace-seller-mode [class*="bg-green-600"],
+html.marketplace-seller-mode [class*="bg-green-700"],
+html.marketplace-seller-mode [class*="bg-emerald-500"],
+html.marketplace-seller-mode [class*="bg-emerald-600"],
+html.marketplace-seller-mode [class*="bg-emerald-700"],
+html.marketplace-seller-mode [class*="bg-rose-500"],
+html.marketplace-seller-mode [class*="bg-rose-600"],
+html.marketplace-seller-mode [class*="bg-rose-700"],
+html.marketplace-seller-mode [class*="bg-purple-500"],
+html.marketplace-seller-mode [class*="bg-purple-600"],
+html.marketplace-seller-mode [class*="bg-violet-500"],
+html.marketplace-seller-mode [class*="bg-violet-600"] {
+  background-color: var(--seller-accent) !important;
+}
+
+html.marketplace-seller-mode [class*="bg-green-50"],
+html.marketplace-seller-mode [class*="bg-green-100"],
+html.marketplace-seller-mode [class*="bg-green-950"],
+html.marketplace-seller-mode [class*="bg-emerald-50"],
+html.marketplace-seller-mode [class*="bg-emerald-100"],
+html.marketplace-seller-mode [class*="bg-emerald-950"],
+html.marketplace-seller-mode [class*="bg-rose-50"],
+html.marketplace-seller-mode [class*="bg-rose-100"],
+html.marketplace-seller-mode [class*="bg-rose-200"],
+html.marketplace-seller-mode [class*="bg-rose-950"],
+html.marketplace-seller-mode [class*="bg-purple-50"],
+html.marketplace-seller-mode [class*="bg-purple-100"],
+html.marketplace-seller-mode [class*="bg-purple-950"],
+html.marketplace-seller-mode [class*="bg-violet-50"],
+html.marketplace-seller-mode [class*="bg-violet-100"],
+html.marketplace-seller-mode [class*="bg-violet-950"] {
+  background-color: var(--seller-accent-soft) !important;
+}
+
+html.marketplace-seller-mode [class*="text-[#006A4E]"],
+html.marketplace-seller-mode [class*="text-[#E11D48]"],
+html.marketplace-seller-mode [class*="text-green-500"],
+html.marketplace-seller-mode [class*="text-green-600"],
+html.marketplace-seller-mode [class*="text-green-700"],
+html.marketplace-seller-mode [class*="text-emerald-500"],
+html.marketplace-seller-mode [class*="text-emerald-600"],
+html.marketplace-seller-mode [class*="text-emerald-700"],
+html.marketplace-seller-mode [class*="text-rose-400"],
+html.marketplace-seller-mode [class*="text-rose-500"],
+html.marketplace-seller-mode [class*="text-rose-600"],
+html.marketplace-seller-mode [class*="text-rose-700"],
+html.marketplace-seller-mode [class*="text-purple-500"],
+html.marketplace-seller-mode [class*="text-purple-600"],
+html.marketplace-seller-mode [class*="text-purple-700"],
+html.marketplace-seller-mode [class*="text-violet-500"],
+html.marketplace-seller-mode [class*="text-violet-600"],
+html.marketplace-seller-mode [class*="text-violet-700"] {
+  color: var(--seller-accent) !important;
+}
+
+html.marketplace-seller-mode [class*="text-green-100"],
+html.marketplace-seller-mode [class*="text-green-200"],
+html.marketplace-seller-mode [class*="text-emerald-100"],
+html.marketplace-seller-mode [class*="text-emerald-200"],
+html.marketplace-seller-mode [class*="text-rose-100"],
+html.marketplace-seller-mode [class*="text-rose-200"],
+html.marketplace-seller-mode [class*="text-rose-300"] {
+  color: #8dceff !important;
+}
+
+html.marketplace-seller-mode [class*="border-[#00543D]"],
+html.marketplace-seller-mode [class*="border-[#00543e]"],
+html.marketplace-seller-mode [class*="border-[#BE123C]"],
+html.marketplace-seller-mode [class*="border-[#9F1239]"],
+html.marketplace-seller-mode [class*="border-rose-"],
+html.marketplace-seller-mode [class*="border-green-"],
+html.marketplace-seller-mode [class*="border-emerald-"],
+html.marketplace-seller-mode [class*="border-purple-"],
+html.marketplace-seller-mode [class*="border-violet-"] {
+  border-color: var(--seller-accent-border) !important;
+}
+
+html.marketplace-seller-mode [class*="ring-[#E11D48]"],
+html.marketplace-seller-mode [class*="ring-rose-"],
+html.marketplace-seller-mode [class*="ring-green-"],
+html.marketplace-seller-mode [class*="ring-emerald-"],
+html.marketplace-seller-mode [class*="ring-purple-"],
+html.marketplace-seller-mode [class*="ring-violet-"] {
+  --tw-ring-color: rgba(0, 132, 255, 0.55) !important;
+}
+
+html.marketplace-seller-mode [class*="hover:bg-[#00543e]"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-[#00523d]"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-[#006A4E]"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-[#19a34a]"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-[#18a249]"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-[#047857]"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-[#BE123C]"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-[#9F1239]"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-green-"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-emerald-"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-rose-"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-purple-"]:hover,
+html.marketplace-seller-mode [class*="hover:bg-violet-"]:hover {
+  background-color: var(--seller-accent-hover) !important;
+}
+
+html.marketplace-seller-mode [class*="from-rose-"] {
+  --tw-gradient-from: #0084FF !important;
+  --tw-gradient-to: rgb(0 132 255 / 0) !important;
+}
+
+html.marketplace-seller-mode [class*="to-rose-"] {
+  --tw-gradient-to: #0084FF !important;
+}
+
+html.marketplace-seller-mode #marketplace-top .seller-buyer-mode-icon {
+  background-color: #008f5b !important;
+  color: #ffffff !important;
+}
+
+html.marketplace-seller-mode #marketplace-top .seller-buyer-mode-icon svg {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
+html.marketplace-seller-mode #marketplace-top .seller-buyer-mode-title {
+  color: #006a4e !important;
+}
+
+html.marketplace-seller-mode #marketplace-top .seller-buyer-mode-button {
+  background-color: #006a4e !important;
+  color: #ffffff !important;
+}
+
+html.marketplace-seller-mode #marketplace-top .seller-buyer-mode-button:hover {
+  background-color: #00523d !important;
+}
+
+html.marketplace-seller-mode #marketplace-top .seller-post-gig-icon {
+  background-color: rgba(0, 132, 255, 0.14) !important;
+  color: #0084ff !important;
+}
+
+html.marketplace-seller-mode #marketplace-top .seller-post-gig-icon svg {
+  color: #0084ff !important;
+  stroke: #0084ff !important;
+}
+
+html.marketplace-seller-mode .seller-verified-check {
+  color: #ffffff !important;
+  fill: #0084FF !important;
+  stroke: #ffffff !important;
+}
+
+html.marketplace-seller-mode .seller-offer-details {
+  background-color: #e11d48 !important;
+}
+
+html.marketplace-seller-mode .seller-offer-details:hover {
+  background-color: #be123c !important;
+}
+
+html.marketplace-seller-mode .seller-offer-list-details {
+  background-color: #059669 !important;
+}
+
+html.marketplace-seller-mode .seller-offer-list-details:hover {
+  background-color: #047857 !important;
+}
+
+html.marketplace-seller-mode .seller-offer-cancel {
+  color: #e11d48 !important;
+  border-color: rgba(225, 29, 72, 0.3) !important;
+  background-color: #ffffff !important;
+}
+
+html.marketplace-seller-mode .seller-offer-cancel:hover {
+  color: #be123c !important;
+  background-color: #fff1f2 !important;
+}
+
+html.marketplace-seller-mode .seller-offer-modal-cancel {
+  background-color: #e11d48 !important;
+  border-color: #e11d48 !important;
+  color: #ffffff !important;
+}
+
+html.marketplace-seller-mode .seller-offer-modal-cancel:hover {
+  background-color: #be123c !important;
+}
+
+html.marketplace-seller-mode .seller-offer-modal-receive {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+}
+
+html.marketplace-seller-mode .seller-offer-modal-receive:hover {
+  background-color: #1d4ed8 !important;
+}
+
+html.marketplace-seller-mode #marketplace-column-3-seller [class*="text-[#0084FF]"],
+html.marketplace-seller-mode #marketplace-column-3-seller [class*="text-[#006A4E]"],
+html.marketplace-seller-mode #marketplace-column-3-seller [class*="text-blue-"],
+html.marketplace-seller-mode #marketplace-column-3-seller [class*="text-sky-"],
+html.marketplace-seller-mode #marketplace-column-3-seller [class*="text-cyan-"],
+html.marketplace-seller-mode #marketplace-column-3-seller [class*="text-emerald-"] {
+  font-weight: 400 !important;
+}
+
+html.marketplace-seller-mode #marketplace-column-3-seller [class*="text-sky-"] strong {
+  font-weight: 400 !important;
+}
+
 /* Liquid Glass Modern Scrollbars */
 ::-webkit-scrollbar {
   width: 8px;

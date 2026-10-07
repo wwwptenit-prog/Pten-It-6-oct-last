@@ -41,7 +41,7 @@ export interface CompanyBillItem {
   id: string;
   payerName: string;
   payerPhone: string;
-  gateway: 'bKash' | 'Nagad' | 'Rocket' | 'Bank' | 'Card' | 'Cash';
+  gateway: 'bKash' | 'Nagad' | 'Rocket' | 'Upay' | 'Bank' | 'Card' | 'Cash';
   transactionId: string;
   amount: number;
   category: string;

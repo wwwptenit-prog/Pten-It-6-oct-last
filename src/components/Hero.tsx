@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { ArrowRight, Sparkles, ShieldCheck, Play, Code2, LineChart, Award, Users } from 'lucide-react';
 import { useData } from '../context/DataContext';
@@ -137,7 +137,7 @@ export const Hero: React.FC<HeroProps> = ({ setActiveTab, mouseCoords: parentMou
               if (!isCodeMockupMode) {
                 return (
                   <div className="relative w-full flex items-end justify-center lg:justify-end self-end select-none">
-                    {/* Unboxed Model Image with Gentle Bottom Mask */}
+                    {/* Unboxed Model Image with Subtle, Gentle Bottom Mask */}
                     <motion.div
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}

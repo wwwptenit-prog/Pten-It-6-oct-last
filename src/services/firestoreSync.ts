@@ -77,11 +77,17 @@ export function subscribeToCollection<T>(
   onData: (items: T[]) => void,
   onError?: (err: any) => void
 ): Unsubscribe {
-  try {
-    const colRef = collection(db, collectionName);
-    return onSnapshot(
-      colRef,
-      (snapshot) => {
+  const colRef = collection(db, collectionName);
+  let unsubscribe: Unsubscribe | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryCount = 0;
+  let stopped = false;
+
+  const listen = () => {
+    if (stopped) return;
+    try {
+      unsubscribe = onSnapshot(colRef, snapshot => {
+        retryCount = 0;
         if (!snapshot.empty) {
           const items = snapshot.docs.map(d => {
             const data = d.data();
@@ -94,27 +100,47 @@ export function subscribeToCollection<T>(
         } else {
           onData([]);
         }
-      },
-      (error) => {
+      }, error => {
         console.warn(`[Firestore onSnapshot] Listener error on ${collectionName}:`, error.message);
-        if (onError) onError(error);
+        onError?.(error);
         try {
           handleFirestoreError(error, OperationType.LIST, collectionName);
         } catch {
           // Handled
         }
-      }
-    );
-  } catch (err) {
-    console.warn(`[Firestore] Failed to initiate onSnapshot for ${collectionName}:`, err);
-    return () => {};
-  }
+        unsubscribe?.();
+        unsubscribe = undefined;
+
+        const isQuotaError = error.code === 'resource-exhausted';
+        const baseDelay = isQuotaError ? 5 * 60_000 : 5_000;
+        const maxDelay = isQuotaError ? 30 * 60_000 : 60_000;
+        const delay = Math.min(maxDelay, baseDelay * (2 ** Math.min(retryCount, 5)));
+        retryCount += 1;
+        retryTimer = setTimeout(listen, delay);
+      });
+    } catch (error) {
+      console.warn(`[Firestore] Failed to initiate onSnapshot for ${collectionName}:`, error);
+      retryTimer = setTimeout(listen, Math.min(60_000, 5_000 * (2 ** Math.min(retryCount++, 4))));
+    }
+  };
+
+  listen();
+  return () => {
+    stopped = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    unsubscribe?.();
+  };
 }
 
 /**
  * Persist or update a single document in Firestore
  */
-export async function syncDocToFirestore(collectionName: string, docId: string, data: any): Promise<boolean> {
+export async function syncDocToFirestore(
+  collectionName: string,
+  docId: string,
+  data: any,
+  onError?: (error: unknown) => void
+): Promise<boolean> {
   if (!docId || !data) return false;
   const path = `${collectionName}/${docId}`;
   try {
@@ -129,6 +155,7 @@ export async function syncDocToFirestore(collectionName: string, docId: string, 
     return true;
   } catch (error) {
     console.warn(`[Firestore Sync] Could not sync ${path}:`, error);
+    onError?.(error);
     try {
       handleFirestoreError(error, OperationType.WRITE, path);
     } catch {

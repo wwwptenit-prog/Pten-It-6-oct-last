@@ -73,41 +73,46 @@ export const Footer: React.FC<FooterProps> = ({ setActiveTab }) => {
                 href={siteSettings.facebookUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="w-9 h-9 rounded-full bg-slate-100 hover:bg-[#006A4E] text-slate-600 hover:text-white flex items-center justify-center transition-colors border border-slate-200"
+                aria-label="Facebook"
+                className="w-10 h-10 rounded-full bg-[#0084FF] hover:bg-[#0073e6] text-white flex items-center justify-center transition-colors border border-blue-600"
               >
-                <Facebook className="w-4 h-4" />
+                <Facebook className="w-5 h-5" />
               </a>
               <a
                 href={siteSettings.youtubeUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="w-9 h-9 rounded-full bg-slate-100 hover:bg-[#E11D48] text-slate-600 hover:text-white flex items-center justify-center transition-colors border border-slate-200"
+                aria-label="YouTube"
+                className="w-10 h-10 rounded-full bg-[#0084FF] hover:bg-[#0073e6] text-white flex items-center justify-center transition-colors border border-blue-600"
               >
-                <Youtube className="w-4 h-4" />
+                <Youtube className="w-5 h-5" />
               </a>
               <a
                 href={siteSettings.instagramUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="w-9 h-9 rounded-full bg-slate-100 hover:bg-[#E11D48] text-slate-600 hover:text-white flex items-center justify-center transition-colors border border-slate-200"
+                aria-label="Instagram"
+                className="w-10 h-10 rounded-full bg-[#0084FF] hover:bg-[#0073e6] text-white flex items-center justify-center transition-colors border border-blue-600"
               >
-                <Instagram className="w-4 h-4" />
+                <Instagram className="w-5 h-5" />
               </a>
               <a
                 href={siteSettings.linkedinUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="w-9 h-9 rounded-full bg-slate-100 hover:bg-[#006A4E] text-slate-600 hover:text-white flex items-center justify-center transition-colors border border-slate-200"
+                aria-label="LinkedIn"
+                className="w-10 h-10 rounded-full bg-[#0084FF] hover:bg-[#0073e6] text-white flex items-center justify-center transition-colors border border-blue-600"
               >
-                <Linkedin className="w-4 h-4" />
+                <Linkedin className="w-5 h-5" />
               </a>
               <a
                 href={`https://wa.me/${siteSettings.whatsapp}`}
                 target="_blank"
                 rel="noreferrer"
-                className="w-9 h-9 rounded-full bg-[#006A4E] hover:bg-[#047857] text-white flex items-center justify-center transition-colors"
+                aria-label="WhatsApp"
+                className="w-10 h-10 rounded-full bg-[#0084FF] hover:bg-[#0073e6] text-white flex items-center justify-center transition-colors border border-blue-600"
               >
-                <MessageSquare className="w-4 h-4" />
+                <MessageSquare className="w-5 h-5" />
               </a>
             </div>
           </div>

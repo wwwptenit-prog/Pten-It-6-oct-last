@@ -34,6 +34,8 @@ import {
   VolumeX
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
+import { AvatarImage } from './ui/AvatarImage';
+import { isDirectMessageVisibleToUser, isNotificationVisibleToUser } from '../utils/marketplaceModeScope';
 
 interface NavbarProps {
   activeTab: string;
@@ -63,6 +65,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     openNotificationCenter,
     notifications,
     directMessages,
+    marketplaceMode,
     rightColumnView,
     setRightColumnView,
     logout,
@@ -74,40 +77,21 @@ export const Navbar: React.FC<NavbarProps> = ({
   // Strictly scope direct messages to current user
   const scopedDirectMessages = React.useMemo(() => {
     if (!directMessages || !currentUser) return [];
-    return directMessages.filter(m => 
-      m.recipientId === currentUser.id ||
-      m.senderId === currentUser.id ||
-      (currentUser.email && m.recipientEmail && m.recipientEmail.toLowerCase() === currentUser.email.toLowerCase()) ||
-      (currentUser.email && m.senderEmail && m.senderEmail.toLowerCase() === currentUser.email.toLowerCase())
+    return directMessages.filter(m =>
+      isDirectMessageVisibleToUser(m, currentUser, marketplaceMode)
     );
-  }, [directMessages, currentUser]);
+  }, [directMessages, currentUser, marketplaceMode]);
 
   // Strictly scope notifications to current user (No default/foreign alerts)
   const scopedNotifications = React.useMemo(() => {
     if (!notifications) return [];
     if (!currentUser) {
-      return notifications.filter(n => n.recipientId === 'all' || n.recipientRole === 'all');
+      return [];
     }
-    return notifications.filter(n => {
-      if (currentUser.role === 'admin') return true;
-      if (n.recipientRole === 'admin' || n.targetTab === 'admin') return false;
-
-      if (n.recipientId && n.recipientId !== 'all') {
-        return n.recipientId === currentUser.id;
-      }
-      if (n.recipientEmail && n.recipientEmail !== 'all') {
-        return Boolean(currentUser.email && n.recipientEmail.toLowerCase() === currentUser.email.toLowerCase());
-      }
-      if (n.recipientRole) {
-        if (n.recipientRole === 'all') return true;
-        if (n.recipientRole === 'student' && (currentUser.role === 'student' || currentUser.roles?.includes('student'))) return true;
-        if (n.recipientRole === 'instructor' && (currentUser.role === 'instructor' || currentUser.roles?.includes('instructor'))) return true;
-        if (n.recipientRole === 'customer' && (currentUser.role === 'customer' || currentUser.roles?.includes('customer'))) return true;
-        return false;
-      }
-      return false;
-    });
-  }, [notifications, currentUser]);
+    return notifications.filter(n =>
+      isNotificationVisibleToUser(n, currentUser, marketplaceMode)
+    );
+  }, [notifications, currentUser, marketplaceMode]);
 
   const unreadMsgCount = scopedDirectMessages.filter(m => !m.read).length;
   const unreadNotifCount = scopedNotifications.filter(n => !n.read).length;
@@ -583,11 +567,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                   title="আমার ড্যাশবোর্ড"
                 >
                   <div className="w-6 h-6 rounded-full bg-white text-[#006A4E] overflow-hidden flex items-center justify-center font-bold text-xs shrink-0">
-                    {currentUser.avatar ? (
-                      <img src={currentUser.avatar} alt={currentUser.name} className="w-full h-full object-cover" />
-                    ) : (
-                      currentUser.name?.charAt(0).toUpperCase() || 'U'
-                    )}
+                    <AvatarImage
+                      src={currentUser.avatar}
+                      alt={currentUser.name}
+                      className="w-full h-full object-cover"
+                    />
                   </div>
                   <span className="max-w-[100px] truncate text-xs">{currentUser.name}</span>
                 </button>
@@ -628,11 +612,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                 className="w-7 h-7 rounded-full bg-white border border-white/30 overflow-hidden flex items-center justify-center shrink-0 cursor-pointer active:scale-95 transition"
                 title={`প্রোফাইল: ${currentUser.name}`}
               >
-                {currentUser.avatar ? (
-                  <img src={currentUser.avatar} alt={currentUser.name} className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-[11px] font-black text-[#006A4E]">{currentUser.name?.charAt(0).toUpperCase() || 'U'}</span>
-                )}
+                <AvatarImage
+                  src={currentUser.avatar}
+                  alt={currentUser.name}
+                  className="w-full h-full object-cover"
+                  fallbackClassName="text-[11px] text-[#006A4E]"
+                />
               </button>
             ) : (
               <button

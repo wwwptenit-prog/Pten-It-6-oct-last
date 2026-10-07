@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useData } from "../context/DataContext";
 import { NotificationItem } from "../types";
+import { isNotificationVisibleToUser } from "../utils/marketplaceModeScope";
 
 interface NotificationCenterModalProps {
   onNavigateTab?: (tab: string, subCategory?: string, isExplicit?: boolean) => void;
@@ -65,42 +66,10 @@ export const NotificationCenterModal: React.FC<NotificationCenterModalProps> = (
 
   if (!isNotificationCenterOpen || isMessengerInboxOpen) return null;
 
+  const scopedNotifications = notifications.filter(n =>
+    isNotificationVisibleToUser(n, currentUser, marketplaceMode === 'selling' ? 'selling' : 'buying')
+  );
   const isSeller = marketplaceMode === 'selling';
-
-  // Role-scoped notifications (Strict privacy: user only sees their own notifications, never default/foreign alerts)
-  const scopedNotifications = notifications.filter(n => {
-    if (!currentUser) {
-      return n.recipientId === 'all' || n.recipientRole === 'all';
-    }
-
-    // Admin sees all system notifications
-    if (currentUser.role === 'admin') return true;
-
-    // Normal users never see admin/staff alerts
-    if (n.recipientRole === 'admin' || n.targetTab === 'admin') return false;
-
-    // Direct recipient targeting
-    if (n.recipientId && n.recipientId !== 'all') {
-      return n.recipientId === currentUser.id;
-    }
-    if (n.recipientEmail && n.recipientEmail !== 'all') {
-      return Boolean(currentUser.email && n.recipientEmail.toLowerCase() === currentUser.email.toLowerCase());
-    }
-
-    // Role-based broadcast
-    if (n.recipientRole) {
-      if (n.recipientRole === 'all') return true;
-      if (isSeller) return n.recipientRole === 'seller';
-      return n.recipientRole === 'buyer' || n.recipientRole === 'customer' || n.recipientRole === 'student';
-    }
-
-    // Explicit mode check
-    if (n.mode === 'selling') return isSeller;
-    if (n.mode === 'buying') return !isSeller;
-
-    // Do not show orphan notifications without recipientId or role to normal users
-    return false;
-  });
 
   const unreadCount = scopedNotifications.filter((n) => !n.read).length;
 

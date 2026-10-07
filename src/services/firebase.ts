@@ -5,7 +5,7 @@ import { getStorage, FirebaseStorage, ref, uploadBytes, getDownloadURL } from 'f
 import rawConfig from '../../firebase-applet-config.json';
 
 // Firebase configuration using applet credentials with environment fallback
-const firebaseConfig = {
+export const currentFirebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || rawConfig.apiKey,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || rawConfig.authDomain,
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || rawConfig.projectId,
@@ -15,12 +15,17 @@ const firebaseConfig = {
   firestoreDatabaseId: import.meta.env.VITE_FIREBASE_DATABASE_ID || rawConfig.firestoreDatabaseId
 };
 
+export const firebaseConfig = currentFirebaseConfig;
+export const isRealFirebaseConfigured = Boolean(currentFirebaseConfig.apiKey && currentFirebaseConfig.projectId);
+
 let app: FirebaseApp;
 if (!getApps().length) {
-  app = initializeApp(firebaseConfig);
+  app = initializeApp(currentFirebaseConfig);
 } else {
   app = getApp();
 }
+
+export { app };
 
 export const auth: Auth = getAuth(app);
 try {
@@ -34,9 +39,9 @@ export const db: Firestore = (() => {
   try {
     return initializeFirestore(app, {
       experimentalForceLongPolling: true,
-    }, firebaseConfig.firestoreDatabaseId || undefined);
+    }, currentFirebaseConfig.firestoreDatabaseId || undefined);
   } catch {
-    return getFirestore(app, firebaseConfig.firestoreDatabaseId || undefined);
+    return getFirestore(app, currentFirebaseConfig.firestoreDatabaseId || undefined);
   }
 })();
 
@@ -55,6 +60,7 @@ async function testConnection() {
     }
   }
 }
+export const testFirebaseHealth = testConnection;
 testConnection();
 
 /**

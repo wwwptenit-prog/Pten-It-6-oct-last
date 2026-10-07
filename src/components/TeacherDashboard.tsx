@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   BookOpen,
   Radio,
@@ -83,6 +83,7 @@ interface TeacherDashboardProps {
   initialStatusFilter?: 'all' | 'new' | 'review';
   openCreateAssignmentModal?: boolean;
   onCloseCreateAssignmentModal?: () => void;
+  createLiveClassRequest?: number;
   hideHeader?: boolean;
 }
 
@@ -93,6 +94,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   initialStatusFilter,
   openCreateAssignmentModal,
   onCloseCreateAssignmentModal,
+  createLiveClassRequest = 0,
   hideHeader
 }) => {
   const {
@@ -140,6 +142,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     if (initialTab === 'certificates') return 'completed';
     return initialTab || 'courses';
   });
+  const lastLiveClassRequest = useRef(createLiveClassRequest);
 
   useEffect(() => {
     if (initialTab) {
@@ -163,10 +166,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [withdrawAmount, setWithdrawAmount] = useState('');
   const [withdrawMethod, setWithdrawMethod] = useState<'bkash' | 'nagad' | 'bank'>('bkash');
   const [withdrawAccount, setWithdrawAccount] = useState('');
-  const [payoutsList, setPayoutsList] = useState([
-    { id: 'W-9081', date: '2026-07-28', amount: 12500, method: 'bKash (01712***89)', paymentMethod: 'bKash', accountNumber: '01712000089', status: 'Approved' },
-    { id: 'W-8812', date: '2026-07-15', amount: 8000, method: 'Nagad (01812***34)', paymentMethod: 'Nagad', accountNumber: '01812000034', status: 'Approved' },
-  ]);
+  const [payoutsList, setPayoutsList] = useState<any[]>([]);
   const [withdrawSuccessMsg, setWithdrawSuccessMsg] = useState('');
   const [isEditPayoutModalOpen, setIsEditPayoutModalOpen] = useState(false);
   const [openTeacherPayoutMenuId, setOpenTeacherPayoutMenuId] = useState<string | null>(null);
@@ -320,7 +320,6 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
   const [modalDuration, setModalDuration] = useState<number>(90);
   const [modalMeetingLink, setModalMeetingLink] = useState<string>('https://meet.google.com/new');
   const [modalSpecialNotes, setModalSpecialNotes] = useState<string>('');
-  const [liveSearchQuery, setLiveSearchQuery] = useState<string>('');
   const [showPastSessions, setShowPastSessions] = useState<boolean>(false);
   const [liveToastMsg, setLiveToastMsg] = useState<string>('');
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
@@ -360,6 +359,14 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     setModalSpecialNotes('সকলকে সময়মতো গুগল মিট রুমে জয়েন করার অনুরোধ করা হচ্ছে।');
     setLiveModalOpen(true);
   };
+
+  useEffect(() => {
+    if (createLiveClassRequest !== lastLiveClassRequest.current) {
+      lastLiveClassRequest.current = createLiveClassRequest;
+      setActiveTabState('live_classes');
+      openCreateLiveModal();
+    }
+  }, [createLiveClassRequest]);
 
   const openEditLiveModal = (session: LiveClassSession) => {
     setEditingSessionId(session.id);
@@ -471,26 +478,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     imageUrl?: string;
     fileName?: string;
     fileUrl?: string;
-  }>>([
-    {
-      id: '1',
-      sender: 'PTENit Admin',
-      text: 'নতুন সেমিস্টার কোর্স কনটেন্ট আপডেট নির্দেশিকা: সম্মানিত ট্রেইনারবৃন্দ, দয়া করে আগামী ব্যাচের মডিউল ও কুইজসমূহ আগামী ১৫ আগস্টের মধ্যে টিচার ড্যাশবোর্ডে আপলোড নিশ্চিত করুন।',
-      time: '10:30 AM',
-      isTeacher: false,
-      read: false,
-      imageUrl: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=800&q=80'
-    },
-    {
-      id: '2',
-      sender: 'অ্যাকাডেমিক ক্লায়েন্ট সাপোর্ট',
-      text: 'স্যার, ক্লায়েন্ট সার্ভিসেস ও বিশেষ ট্রেনিং সেশনের তালিকা শিট সংযুক্ত করা হয়েছে। বিস্তারিত দেখতে ইমেজে ক্লিক করুন।',
-      time: '11:15 AM',
-      isTeacher: false,
-      read: false,
-      imageUrl: 'https://images.unsplash.com/photo-1454165804606-c3d57bc86b40?auto=format&fit=crop&w=800&q=80'
-    }
-  ]);
+  }>>([]);
 
   // Combined Teacher Notifications State (Includes Student Assignment Submissions & Admin Notices)
   const [teacherNotificationsList, setTeacherNotificationsList] = useState<any[]>([]);
@@ -814,7 +802,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
         title: `🔄 ${currentLessonName} পুনরায় জমা দেওয়ার নির্দেশ`,
         message: `${againModalSub.studentName}, আপনার "${asgn?.courseTitle || 'কোর্স'}" এর ${currentLessonName} কাজটি সন্তোষজনক না হওয়ায় পুনরায় সম্পন্ন করতে বলা হয়েছে। কারণ: "${againReason || 'সংশোধন করে জমা দিন'}"`,
         type: 'warning',
-        category: 'mentor'
+        category: 'mentor',
+        recipientId: againModalSub.studentId,
+        recipientEmail: againModalSub.studentEmail,
+        recipientRole: 'buyer',
+        mode: 'buying'
       });
     }
 
@@ -1014,26 +1006,60 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
     };
   };
 
-  const teacherCourses = courses.length > 0 ? courses : [];
+  const teacherCourses = React.useMemo(() => {
+    if (!currentUser) return [];
+    if (currentUser.role === 'admin') return courses;
+    return courses.filter(c =>
+      c.assignedInstructorId === currentUser.id ||
+      (c as any).instructorId === currentUser.id ||
+      c.instructor === currentUser.name ||
+      c.instructorName === currentUser.name ||
+      (currentUser.email && (c as any).instructorEmail && (c as any).instructorEmail.toLowerCase() === currentUser.email.toLowerCase())
+    );
+  }, [courses, currentUser]);
+
+  const teacherCourseIds = React.useMemo(() => new Set(teacherCourses.map(c => c.id)), [teacherCourses]);
+
+  const relevantSubmissions = React.useMemo(() => {
+    if (!currentUser) return [];
+    if (currentUser.role === 'admin') return submissions;
+    return submissions.filter(s => teacherCourseIds.has(s.courseId));
+  }, [submissions, teacherCourseIds, currentUser]);
 
   // Workflow Categorization:
   // 1. নতুন (New): status === 'submitted' or status === 'new'
   // 2. রিভিউ (Review): under_review or review or returned
-  const pendingSubmissions = submissions.filter(s => (s.status as any) === 'submitted' || (s.status as any) === 'new');
-  const reviewSubmissions = submissions.filter(s => 
+  const pendingSubmissions = relevantSubmissions.filter(s => (s.status as any) === 'submitted' || (s.status as any) === 'new');
+  const reviewSubmissions = relevantSubmissions.filter(s => 
     s.status === 'under_review' || 
     s.status === 'review' || 
     s.status === 'returned' ||
     (s.status === 'graded' && !getStudentCourseProgress(s.studentId, s.studentEmail, s.assignmentId).isAllCompleted)
   );
-  const totalGraded = submissions.filter(s => 
+  const totalGraded = relevantSubmissions.filter(s => 
     s.status === 'graded' && getStudentCourseProgress(s.studentId, s.studentEmail, s.assignmentId).isAllCompleted
   );
 
-  const filteredAssignments = assignments.filter(a =>
-    a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    a.courseTitle?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredAssignments = assignments.filter(a => {
+    const isMyCourse = currentUser?.role === 'admin' || teacherCourseIds.has(a.courseId);
+    if (!isMyCourse) return false;
+    return a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      a.courseTitle?.toLowerCase().includes(searchQuery.toLowerCase());
+  });
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center p-8 text-center max-w-md mx-auto space-y-4 font-bengali">
+        <div className="w-16 h-16 rounded-2xl bg-[#006A4E]/10 text-[#006A4E] flex items-center justify-center mx-auto shadow-inner">
+          <GraduationCap className="w-8 h-8" />
+        </div>
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">লগইন প্রয়োজন</h2>
+        <p className="text-sm text-slate-500">
+          ইনস্ট্রাকটর ড্যাশবোর্ড দেখার জন্য অনুগ্রহ করে আপনার শিক্ষক অ্যাকাউন্টে লগইন করুন।
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 py-4 sm:py-8 transition-colors font-bengali text-slate-900 dark:text-slate-100">
@@ -2473,53 +2499,11 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
               </div>
             )}
 
-            {/* Simple Clean Header with Create Live Class Button */}
-            <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4">
-              <div className="space-y-0.5">
-                <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <Video className="w-5 h-5 text-rose-500 shrink-0" />
-                  <span>লাইভ ক্লাস</span>
-                </h2>
-                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                  শিডিউল অনুযায়ী অটো লাইভ ও স্বয়ংক্রিয় রিমুভ
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5">
-                {/* Quick Search */}
-                <div className="relative w-full sm:w-56">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
-                  <input
-                    type="text"
-                    value={liveSearchQuery}
-                    onChange={e => setLiveSearchQuery(e.target.value)}
-                    placeholder="খুঁজুন..."
-                    className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3 py-2 text-xs font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-rose-500 focus:outline-none"
-                  />
-                </div>
-
-                {/* Primary Action: Create Live Class */}
-                <button
-                  type="button"
-                  onClick={() => openCreateLiveModal()}
-                  className="px-4 py-2.5 bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-700 hover:to-red-700 text-white text-xs font-black rounded-xl shadow-md hover:shadow-lg transition cursor-pointer flex items-center justify-center gap-2 active:scale-95 whitespace-nowrap"
-                >
-                  <Plus className="w-4 h-4 stroke-[3]" />
-                  <span>নতুন লাইভ ক্লাস</span>
-                </button>
-              </div>
-            </div>
-
             {/* Active Live Classes List (Auto-Scheduled & Auto-Removing Expired) */}
             {(() => {
               const activeSessions = getActiveLiveSessions(liveSessions);
-              const filteredSessions = activeSessions.filter(s =>
-                s.topic.toLowerCase().includes(liveSearchQuery.toLowerCase()) ||
-                s.courseTitle.toLowerCase().includes(liveSearchQuery.toLowerCase()) ||
-                (s.moduleTitle && s.moduleTitle.toLowerCase().includes(liveSearchQuery.toLowerCase()))
-              );
 
-              if (filteredSessions.length === 0) {
+              if (activeSessions.length === 0) {
                 return (
                   <div className="bg-white dark:bg-slate-900 p-10 rounded-3xl border border-slate-200 dark:border-slate-800 text-center space-y-4">
                     <div className="w-16 h-16 rounded-full bg-rose-500/10 text-rose-500 flex items-center justify-center mx-auto">
@@ -2529,25 +2513,14 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
                       <h3 className="text-base font-black text-slate-900 dark:text-white">
                         কোনো লাইভ ক্লাস নেই
                       </h3>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto">
-                        শিক্ষার্থীদের জন্য নতুন লাইভ ক্লাস শিডিউল করুন।
-                      </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => openCreateLiveModal()}
-                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-black text-xs rounded-xl shadow-md transition cursor-pointer active:scale-95"
-                    >
-                      <Plus className="w-4 h-4 stroke-[3]" />
-                      <span>নতুন লাইভ ক্লাস তৈরি করুন</span>
-                    </button>
                   </div>
                 );
               }
 
               return (
                 <div className="grid grid-cols-1 gap-4 max-w-2xl mx-auto w-full">
-                  {filteredSessions.map(session => {
+                  {activeSessions.map(session => {
                     const dynamicStatus = getLiveSessionDynamicStatus(session);
                     const isLive = dynamicStatus === 'live_now';
                     const link = session.meetingLink || 'https://meet.google.com/ptenit-live-class';

@@ -92,6 +92,29 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
   const [isOrderReceived, setIsOrderReceived] = useState(false);
   const [orderReceivedSuccessMsg, setOrderReceivedSuccessMsg] = useState('');
 
+  // Check if this project/offer is already claimed or received by another seller
+  const isAlreadyReceivedByOther = Boolean(
+    ((service as any).isReceived && (!currentUser || ((service as any).sellerId !== currentUser.id && (service as any).claimedSellerId !== currentUser.id))) ||
+    ((service as any).assignedStaff && (!currentUser || (service as any).assignedStaff !== currentUser.id)) ||
+    ((service as any).assignedExpert && (!currentUser || (service as any).assignedExpert !== currentUser.id)) ||
+    marketplaceOrders?.some(o => 
+      (o.gigId === service.id || o.title === service.title || (o.jobId && o.jobId === service.id)) &&
+      o.status !== 'cancelled' &&
+      (!currentUser || o.sellerId !== currentUser.id)
+    )
+  );
+
+  const isReceivedByMe = Boolean(
+    isOrderReceived ||
+    ((service as any).claimedSellerId && currentUser && (service as any).claimedSellerId === currentUser.id) ||
+    ((service as any).assignedStaff && currentUser && (service as any).assignedStaff === currentUser.id) ||
+    marketplaceOrders?.some(o => 
+      (o.gigId === service.id || o.title === service.title || (o.jobId && o.jobId === service.id)) &&
+      o.status !== 'cancelled' &&
+      currentUser && o.sellerId === currentUser.id
+    )
+  );
+
   // Check active/running or completed order for this service
   const userExistingOrder = marketplaceOrders?.find((o) => {
     if (o.gigId !== service.id && o.title !== service.title) return false;
@@ -109,6 +132,21 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
   const handleReceiveOrderAsSeller = () => {
     if (!currentUser) {
       if (openAuthModal) openAuthModal();
+      return;
+    }
+
+    if (currentUser.id === service.sellerId) {
+      alert('এটি আপনার নিজের পোস্টকৃত পাবলিক অফার। সেলাররা আপনার অফারে আবেদন বা রিসিভ করতে পারবে।');
+      return;
+    }
+
+    if (isAlreadyReceivedByOther) {
+      alert('এই অর্ডারটি ইতোমধ্যে অন্য একজন সেলার গ্রহণ করেছেন। আপনি শুধুমাত্র এর বিবরণ দেখতে পারবেন।');
+      return;
+    }
+
+    if (isReceivedByMe) {
+      alert('আপনি ইতোমধ্যে এই অর্ডারটি রিসিভ করেছেন। এটি আপনার ড্যাশবোর্ডে সক্রিয় রয়েছে।');
       return;
     }
 
@@ -356,10 +394,9 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
   };
 
   // Internal helper to create the marketplace order
-  const finalizeServiceOrder = (methodDesc: string, transactionIdCode: string, isAdvanceFree: boolean) => {
+  const finalizeServiceOrder = async (methodDesc: string, transactionIdCode: string, isAdvanceFree: boolean) => {
     let activeBuyerId = currentUser?.id;
     if (!activeBuyerId) {
-      activeBuyerId = `usr-${Date.now()}`;
       const finalPass = customerPassword.trim() || '123456';
       const newUserData = {
         name: customerName.trim() || 'সম্মানিত বায়ার',
@@ -370,7 +407,12 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
         activeRole: 'customer' as const
       };
       if (signup) {
-        signup(newUserData, finalPass);
+        const createdUser = await signup(newUserData, finalPass);
+        if (!createdUser) {
+          setOrderError('অ্যাকাউন্ট তৈরি ও সংরক্ষণ করা যায়নি। ইমেইল/মোবাইল ও ইন্টারনেট সংযোগ যাচাই করে আবার চেষ্টা করুন।');
+          return;
+        }
+        activeBuyerId = createdUser.id;
       }
     }
 
@@ -414,7 +456,7 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
   };
 
   // Step 1: Proceed to Payment OR directly finalize order if Work-First (০ টাকা অগ্রিম)
-  const handleProceedToPaymentStep = (e?: React.FormEvent) => {
+  const handleProceedToPaymentStep = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setOrderError(null);
 
@@ -441,7 +483,7 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
 
     // যেটাতে আগে কাজ শুরু, সেটাতে কোনো অগ্রিম পেমেন্ট দিতে হয় না - কাজের পর পেমেন্ট!
     if (isWorkFirst) {
-      finalizeServiceOrder('কাজের পর পেমেন্ট (০ অগ্রিম)', 'PAY_AFTER_WORK', true);
+      await finalizeServiceOrder('কাজের পর পেমেন্ট (০ অগ্রিম)', 'PAY_AFTER_WORK', true);
       return;
     }
 
@@ -449,7 +491,7 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
   };
 
   // Step 2: Finalize Service Order for Premium Packages with TrxID
-  const handleConfirmOrder = (e?: React.FormEvent) => {
+  const handleConfirmOrder = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setOrderError(null);
 
@@ -458,7 +500,7 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
       return;
     }
 
-    finalizeServiceOrder(`${paymentMethod} (TrxID: ${trxId})`, trxId, false);
+    await finalizeServiceOrder(`${paymentMethod} (TrxID: ${trxId})`, trxId, false);
   };
 
   const getOrderWhatsAppLink = (order: MarketplaceOrder) => {
@@ -718,29 +760,48 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
                   <span>{orderReceivedSuccessMsg}</span>
                 </div>
               )}
-              <button
-                type="button"
-                onClick={() => {
-                  if (currentUser?.id === service.sellerId) {
-                    alert('এটি আপনার নিজের পোস্টকৃত পাবলিক অফার। সেলাররা আপনার অফারে আবেদন বা রিসিভ করতে পারবে।');
-                    return;
-                  }
-                  handleReceiveOrderAsSeller();
-                }}
-                className="w-full py-3 px-4 rounded-xl text-white font-bold font-bengali text-sm sm:text-base shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 bg-[#006A4E] hover:bg-[#00523d] active:bg-[#003d2e] active:scale-98"
-              >
-                <Zap className="w-4 h-4 fill-white text-white" />
-                <span>
-                  {currentUser?.id === service.sellerId
-                    ? 'আপনার পাবলিক অফার'
-                    : isOrderReceived
-                    ? 'অর্ডার রিসিভড কাজ শুরু করুন'
-                    : 'অর্ডার রিসিভ করুন'}
-                </span>
-                <span className="font-extrabold text-amber-200">
-                  ৳{buyerBudget.toLocaleString('bn-BD')}
-                </span>
-              </button>
+              {isAlreadyReceivedByOther ? (
+                <div className="w-full py-3 px-4 rounded-xl text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold font-bengali text-xs sm:text-sm flex items-center justify-center gap-2 select-none shadow-xs">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                  <span>অর্ডারটি অন্য সেলার গ্রহণ করেছেন (রিসিভড)</span>
+                </div>
+              ) : isReceivedByMe ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (setActiveTab) {
+                      setActiveTab('marketplace');
+                    }
+                    onClose();
+                  }}
+                  className="w-full py-3 px-4 rounded-xl text-white font-bold font-bengali text-sm sm:text-base bg-blue-600 hover:bg-blue-700 shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4 text-white" />
+                  <span>অর্ডার রিসিভড • আপনার অর্ডারে দেখুন</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (currentUser?.id === service.sellerId) {
+                      alert('এটি আপনার নিজের পোস্টকৃত পাবলিক অফার। সেলাররা আপনার অফারে আবেদন বা রিসিভ করতে পারবে।');
+                      return;
+                    }
+                    handleReceiveOrderAsSeller();
+                  }}
+                  className="w-full py-3 px-4 rounded-xl text-white font-bold font-bengali text-sm sm:text-base shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 bg-[#006A4E] hover:bg-[#00523d] active:bg-[#003d2e] active:scale-98"
+                >
+                  <Zap className="w-4 h-4 fill-white text-white" />
+                  <span>
+                    {currentUser?.id === service.sellerId
+                      ? 'আপনার পাবলিক অফার'
+                      : 'অর্ডার রিসিভ করুন'}
+                  </span>
+                  <span className="font-extrabold text-amber-200">
+                    ৳{buyerBudget.toLocaleString('bn-BD')}
+                  </span>
+                </button>
+              )}
             </div>
 
             {/* Security Notice */}
@@ -988,51 +1049,72 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
                 <span>{orderReceivedSuccessMsg}</span>
               </div>
             )}
-            <button
-              type="button"
-              onClick={() => {
-                if (isSellerViewing) {
-                  handleReceiveOrderAsSeller();
-                } else {
-                  setOrderModalOpen(true);
-                  setCheckoutStep(1);
-                  setOrderError(null);
-                }
-              }}
-              className={`w-full py-3 px-4 rounded-lg text-white font-bold font-bengali text-sm sm:text-base shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98 ${
-                isSellerViewing
-                  ? 'bg-[#006A4E] hover:bg-[#00523d] active:bg-[#003d2e]'
-                  : isWorkFirst
-                  ? 'bg-[#006A4E] hover:bg-[#00543e] active:bg-[#003d2e]'
-                  : selectedTier === 'basic'
-                  ? 'bg-[#00543e] hover:bg-[#004231] active:bg-[#14532d]'
-                  : selectedTier === 'standard'
-                  ? 'bg-red-600 hover:bg-red-700 active:bg-red-800'
-                  : 'bg-gradient-to-r from-purple-700 via-indigo-700 to-purple-800 hover:from-purple-800 hover:to-indigo-900'
-              }`}
-            >
-              {isSellerViewing ? (
-                <>
-                  <Zap className="w-4 h-4 fill-white text-white" />
-                  <span>{isOrderReceived ? 'অর্ডার রিসিভড কাজ শুরু করুন' : 'অর্ডার রিসিভ করুন'}</span>
-                </>
-              ) : isWorkFirst ? (
-                <>
-                  <CheckCircle2 className="w-4 h-4 text-emerald-200" />
-                  <span>{isOrderCompleted ? 'নতুন কাজ শুরু করুন' : isOrderRunning ? 'আরেকটি কাজ শুরু করুন' : 'আগে কাজ শুরু করুন'}</span>
-                  <span className="font-extrabold text-amber-200">
-                    ৳০ অগ্রিম
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span>{isOrderCompleted ? 'নতুন অর্ডার করুন' : isOrderRunning ? 'আরেকটি নতুন অর্ডার করুন' : 'অর্ডার করুন'}</span>
-                  <span className="font-extrabold text-amber-200">
-                    ৳{(currentPackage.price ?? 2500).toLocaleString('bn-BD')}
-                  </span>
-                </>
-              )}
-            </button>
+            {isSellerViewing && isAlreadyReceivedByOther ? (
+              <div className="w-full py-3 px-4 rounded-xl text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-bold font-bengali text-xs sm:text-sm flex items-center justify-center gap-2 select-none shadow-xs">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <span>অর্ডারটি অন্য সেলার গ্রহণ করেছেন (রিসিভড)</span>
+              </div>
+            ) : isSellerViewing && isReceivedByMe ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (setActiveTab) {
+                    setActiveTab('marketplace');
+                  }
+                  onClose();
+                }}
+                className="w-full py-3 px-4 rounded-xl text-white font-bold font-bengali text-sm sm:text-base bg-blue-600 hover:bg-blue-700 shadow-md transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <CheckCircle2 className="w-4 h-4 text-white" />
+                <span>অর্ডার রিসিভড • আপনার অর্ডারে দেখুন</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isSellerViewing) {
+                    handleReceiveOrderAsSeller();
+                  } else {
+                    setOrderModalOpen(true);
+                    setCheckoutStep(1);
+                    setOrderError(null);
+                  }
+                }}
+                className={`w-full py-3 px-4 rounded-lg text-white font-bold font-bengali text-sm sm:text-base shadow-md hover:shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 active:scale-98 ${
+                  isSellerViewing
+                    ? 'bg-[#006A4E] hover:bg-[#00523d] active:bg-[#003d2e]'
+                    : isWorkFirst
+                    ? 'bg-[#006A4E] hover:bg-[#00543e] active:bg-[#003d2e]'
+                    : selectedTier === 'basic'
+                    ? 'bg-[#00543e] hover:bg-[#004231] active:bg-[#14532d]'
+                    : selectedTier === 'standard'
+                    ? 'bg-red-600 hover:bg-red-700 active:bg-red-800'
+                    : 'bg-gradient-to-r from-purple-700 via-indigo-700 to-purple-800 hover:from-purple-800 hover:to-indigo-900'
+                }`}
+              >
+                {isSellerViewing ? (
+                  <>
+                    <Zap className="w-4 h-4 fill-white text-white" />
+                    <span>অর্ডার রিসিভ করুন</span>
+                  </>
+                ) : isWorkFirst ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4 text-emerald-200" />
+                    <span>{isOrderCompleted ? 'নতুন কাজ শুরু করুন' : isOrderRunning ? 'আরেকটি কাজ শুরু করুন' : 'আগে কাজ শুরু করুন'}</span>
+                    <span className="font-extrabold text-amber-200">
+                      ৳০ অগ্রিম
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span>{isOrderCompleted ? 'নতুন অর্ডার করুন' : isOrderRunning ? 'আরেকটি নতুন অর্ডার করুন' : 'অর্ডার করুন'}</span>
+                    <span className="font-extrabold text-amber-200">
+                      ৳{(currentPackage.price ?? 2500).toLocaleString('bn-BD')}
+                    </span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
           {/* নিচে "১০-দিনের মানি ব্যাক ও এস্ক্রো গ্যারান্টি" ও "দ্রুত অনলাইন টেকনিক্যাল সাপোর্ট" */}
@@ -1727,25 +1809,46 @@ export const ServiceDetailModal: React.FC<ServiceDetailModalProps> = ({
                     )}
 
                     {/* অর্ডার বাটন - সর্বদা কাজ করবে */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (isSellerViewing) {
-                          handleReceiveOrderAsSeller();
-                        } else {
-                          setOrderModalOpen(true);
-                          setCheckoutStep(1);
-                          setOrderError(null);
-                        }
-                      }}
-                      className="w-full py-2.5 sm:py-3 bg-[#00543e] hover:bg-[#004231] active:bg-[#14532d] text-white font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 transition cursor-pointer shadow-xs"
-                    >
-                      {isSellerViewing ? (
-                        <span>{isOrderReceived ? 'অর্ডার রিসিভড' : 'অর্ডার রিসিভ করুন'} - ৳{(isBuyerOffer ? buyerBudget : (currentPackage.price ?? 5000)).toLocaleString('bn-BD')}</span>
-                      ) : (
-                        <span>{isOrderCompleted ? 'নতুন অর্ডার করুন' : isOrderRunning ? 'আরেকটি নতুন অর্ডার করুন' : 'অর্ডার করুন'} - ৳{(currentPackage.price ?? 5000).toLocaleString('bn-BD')}</span>
-                      )}
-                    </button>
+                    {isSellerViewing && isAlreadyReceivedByOther ? (
+                      <div className="w-full py-2.5 sm:py-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 select-none shadow-xs">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                        <span>অর্ডারটি অন্য সেলার গ্রহণ করেছেন (রিসিভড)</span>
+                      </div>
+                    ) : isSellerViewing && isReceivedByMe ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (setActiveTab) {
+                            setActiveTab('marketplace');
+                          }
+                          onClose();
+                        }}
+                        className="w-full py-2.5 sm:py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 transition cursor-pointer shadow-xs"
+                      >
+                        <CheckCircle2 className="w-4 h-4 text-white" />
+                        <span>অর্ডার রিসিভড • আপনার অর্ডারে দেখুন</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isSellerViewing) {
+                            handleReceiveOrderAsSeller();
+                          } else {
+                            setOrderModalOpen(true);
+                            setCheckoutStep(1);
+                            setOrderError(null);
+                          }
+                        }}
+                        className="w-full py-2.5 sm:py-3 bg-[#00543e] hover:bg-[#004231] active:bg-[#14532d] text-white font-bold rounded-xl text-xs sm:text-sm flex items-center justify-center gap-2 transition cursor-pointer shadow-xs"
+                      >
+                        {isSellerViewing ? (
+                          <span>অর্ডার রিসিভ করুন - ৳{(isBuyerOffer ? buyerBudget : (currentPackage.price ?? 5000)).toLocaleString('bn-BD')}</span>
+                        ) : (
+                          <span>{isOrderCompleted ? 'নতুন অর্ডার করুন' : isOrderRunning ? 'আরেকটি নতুন অর্ডার করুন' : 'অর্ডার করুন'} - ৳{(currentPackage.price ?? 5000).toLocaleString('bn-BD')}</span>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
               )}

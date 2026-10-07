@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { Assignment } from '../types';
+import { isNotificationVisibleToUser } from '../utils/marketplaceModeScope';
 import {
   getActiveLiveSessions,
   getLiveSessionDynamicStatus,
@@ -187,17 +188,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Student's scoped notifications (Strict privacy: only notifications explicitly addressed to this student)
   const myNotifications = React.useMemo(() => {
     if (!currentUser) return [];
-    return notifications.filter(n => {
-      if (n.recipientRole === 'admin' || n.targetTab === 'admin') return false;
-      if (n.recipientId && n.recipientId !== 'all') {
-        return n.recipientId === currentUser.id;
-      }
-      if (n.recipientEmail && n.recipientEmail !== 'all') {
-        return Boolean(currentUser.email && n.recipientEmail.toLowerCase() === currentUser.email.toLowerCase());
-      }
-      if (n.recipientRole === 'student' || n.recipientRole === 'all') return true;
-      return false;
-    });
+    return notifications.filter(n => isNotificationVisibleToUser(n, currentUser, 'buying'));
   }, [notifications, currentUser]);
 
   const unreadNotifCount = myNotifications.filter(n => !n.read).length;

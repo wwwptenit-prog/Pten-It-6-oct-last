@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useData } from '../context/DataContext';
+import { getDirectConversationId } from '../utils/marketplaceModeScope';
 import { DirectProjectOfferChatCard } from './DirectProjectOfferChatCard';
 import { SendDirectOfferModal } from './SendDirectOfferModal';
 import { DirectOfferMeta, ChatMessage } from '../types';
@@ -189,6 +190,7 @@ export const MarketplaceMessengerView: React.FC<MarketplaceMessengerViewProps> =
 
   // Add real direct messages scoped to current user
   if (directMessages && directMessages.length > 0) {
+    const grouped = new Map<string, typeof directMessages>();
     directMessages.forEach(dm => {
       const isForMe = Boolean(
         currentUser && (
@@ -198,21 +200,31 @@ export const MarketplaceMessengerView: React.FC<MarketplaceMessengerViewProps> =
           (dm.senderEmail && currentUser.email && dm.senderEmail.toLowerCase() === currentUser.email.toLowerCase())
         )
       );
-      if (isForMe && !allConversationsMap.has(dm.id)) {
-        allConversationsMap.set(dm.id, {
-          id: dm.id,
-          name: dm.senderName || 'ইউজার',
-          avatar: dm.senderAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=120&q=80',
-          role: dm.senderRole || 'মার্কেটপ্লেস মেম্বার',
+      if (isForMe) {
+        const otherId = dm.senderId === currentUser?.id ? dm.recipientId : dm.senderId;
+        const id = dm.conversationId || (currentUser && otherId ? getDirectConversationId(currentUser.id, otherId, dm.orderId) : dm.id);
+        grouped.set(id, [...(grouped.get(id) || []), dm]);
+      }
+    });
+    grouped.forEach((messages, id) => {
+      if (!allConversationsMap.has(id)) {
+        const latest = [...messages].sort((a, b) => (b.time || '').localeCompare(a.time || ''))[0];
+        const otherId = latest.senderId === currentUser?.id ? latest.recipientId : latest.senderId;
+        const otherUser = users?.find(user => user.id === otherId);
+        allConversationsMap.set(id, {
+          id,
+          name: otherUser?.name || (latest.senderId === currentUser?.id ? latest.recipientEmail : latest.senderName) || 'ইউজার',
+          avatar: otherUser?.avatar || latest.senderAvatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=120&q=80',
+          role: otherUser?.role || latest.senderRole || 'মার্কেটপ্লেস মেম্বার',
           badge: 'Member',
           rating: 5.0,
           ordersCount: 1,
-          lastMessage: (dm as any).message || dm.text,
-          time: dm.time || 'এইমাত্র',
-          unreadCount: dm.read ? 0 : (dm.unreadCount || 1),
+          lastMessage: latest.text,
+          time: latest.time || 'এইমাত্র',
+          unreadCount: messages.filter(message => message.recipientId === currentUser?.id && !message.read).length,
           isOnline: true,
-          category: dm.category || 'sellers',
-          orderId: dm.orderId
+          category: latest.category || 'sellers',
+          orderId: latest.orderId
         });
       }
     });
@@ -248,22 +260,36 @@ export const MarketplaceMessengerView: React.FC<MarketplaceMessengerViewProps> =
     convoId: c.id
   }));
 
-  const currentActiveWin = activeChatWindows?.find(w => w.id === selectedConversationId) || (
+  const selectedThread = selectedConversationId ? (directMessages || []).filter(message =>
+    message.conversationId === selectedConversationId || message.id === selectedConversationId
+  ).sort((a, b) => (a.time || '').localeCompare(b.time || '')) : [];
+  const selectedActiveWindow = activeChatWindows?.find(w => w.id === selectedConversationId);
+  const currentActiveWin = selectedActiveWindow ? {
+    ...selectedActiveWindow,
+    messages: selectedThread.length ? selectedThread.map(message => ({
+      id: message.id,
+      senderName: message.senderName,
+      senderAvatar: message.senderAvatar,
+      isSelf: message.senderId === currentUser?.id,
+      text: message.text,
+      time: message.time || 'এখন'
+    })) : selectedActiveWindow.messages
+  } : (
     selectedConversationId ? {
       id: selectedConversationId,
       senderName: conversationList.find(c => c.id === selectedConversationId)?.name || 'মার্কেটপ্লেস সেলার',
       senderRole: conversationList.find(c => c.id === selectedConversationId)?.role || 'টপ রেটেড সেলার',
       senderAvatar: conversationList.find(c => c.id === selectedConversationId)?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
-      messages: [
-        {
-          id: 'msg-default-1',
-          senderName: conversationList.find(c => c.id === selectedConversationId)?.name || 'সেলার',
-          senderAvatar: conversationList.find(c => c.id === selectedConversationId)?.avatar,
-          isSelf: false,
-          text: conversationList.find(c => c.id === selectedConversationId)?.lastMessage || 'আসসালামু আলাইকুম! আপনার প্রজেক্টের রিকোয়ারমেন্ট বা সার্ভিস সম্পর্কে জানান।',
-          time: conversationList.find(c => c.id === selectedConversationId)?.time || '১০ মিনিট আগে'
-        }
-      ]
+      messages: (() => {
+        return selectedThread.map(message => ({
+          id: message.id,
+          senderName: message.senderName,
+          senderAvatar: message.senderAvatar,
+          isSelf: message.senderId === currentUser?.id,
+          text: message.text,
+          time: message.time || 'এখন'
+        }));
+      })()
     } : null
   );
 
@@ -739,12 +765,14 @@ export const MarketplaceMessengerView: React.FC<MarketplaceMessengerViewProps> =
                   <div
                     key={u.id}
                     onClick={() => {
-                      const convoId = `chat-${u.id}`;
+                      const convoId = currentUser ? getDirectConversationId(currentUser.id, u.id) : `chat-${u.id}`;
                       openChatWindow({
                         id: convoId,
                         senderName: u.name,
                         senderAvatar: u.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=120&q=80',
-                        senderRole: u.role === 'customer' ? 'বায়ার' : ((u.role as string) === 'seller' ? 'সেলার' : 'মেম্বার')
+                        senderRole: u.role === 'customer' ? 'বায়ার' : ((u.role as string) === 'seller' ? 'সেলার' : 'মেম্বার'),
+                        targetUserId: u.id,
+                        targetUserEmail: u.email
                       });
                       setSelectedConversationId(convoId);
                       setIsNewChatModalOpen(false);

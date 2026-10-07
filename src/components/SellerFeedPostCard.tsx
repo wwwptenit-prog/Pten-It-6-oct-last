@@ -125,7 +125,7 @@ export const SellerFeedPostCard: React.FC<SellerFeedPostCardProps> = ({
   const postTime = useMemo(() => {
     return formatFeedTime((gig as any).createdAt);
   }, [gig]);
-  const sellerName = currentUser?.name || gig.sellerName || 'Mds Kazi Sohag';
+  const sellerName = gig.sellerName || currentUser?.name || 'সেলার';
   const sellerAvatar = currentUser?.avatar || gig.sellerAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=200&q=80';
   const salesCount = gig.salesCount ?? 0;
 
@@ -150,7 +150,7 @@ export const SellerFeedPostCard: React.FC<SellerFeedPostCardProps> = ({
               </span>
               <span title="Verified Profile">
                 <CheckCircle2
-                  className="w-3.5 h-3.5 text-[#006A4E] fill-[#006A4E] text-white shrink-0"
+                  className="seller-verified-check w-3.5 h-3.5 text-[#006A4E] fill-[#006A4E] text-white shrink-0"
                 />
               </span>
             </div>

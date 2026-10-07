@@ -186,6 +186,20 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({ setActiveT
     );
   }, [contactMessages, currentUser]);
 
+  if (!currentUser) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center p-8 text-center max-w-md mx-auto space-y-4 font-bengali">
+        <div className="w-16 h-16 rounded-2xl bg-[#006A4E]/10 text-[#006A4E] flex items-center justify-center mx-auto shadow-inner">
+          <User className="w-8 h-8" />
+        </div>
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">লগইন প্রয়োজন</h2>
+        <p className="text-sm text-slate-500">
+          ক্লায়েন্ট ড্যাশবোর্ড দেখার জন্য অনুগ্রহ করে আপনার অ্যাকাউন্টে লগইন করুন।
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-100/90 dark:bg-slate-950 py-3 sm:py-6 md:py-8 pb-28 lg:pb-8 transition-colors font-bengali">
       <div className="max-w-7xl mx-auto px-3 sm:px-6 md:px-8 lg:px-12">

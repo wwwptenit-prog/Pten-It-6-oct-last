@@ -74,7 +74,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   // Direct, Instant & Frictionless Signup
-  const handleDirectSignup = (e: React.FormEvent) => {
+  const handleDirectSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -108,18 +108,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    let primaryRole: 'customer' | 'instructor' | 'specialist' = 'customer';
+    let primaryRole: 'customer' | 'specialist' = 'customer';
     let userRoles: ('customer' | 'specialist' | 'instructor' | 'admin')[] = ['customer'];
 
     if (selectedRoleType === 'customer') {
       primaryRole = 'customer';
       userRoles = ['customer'];
     } else if (selectedRoleType === 'specialist') {
-      primaryRole = 'instructor';
-      userRoles = ['specialist', 'instructor'];
+      primaryRole = 'specialist';
+      userRoles = ['specialist'];
     } else if (selectedRoleType === 'both') {
       primaryRole = 'customer';
-      userRoles = ['customer', 'specialist', 'instructor'];
+      userRoles = ['customer', 'specialist'];
     }
 
     const nowIso = new Date().toISOString();
@@ -131,22 +131,52 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       roles: userRoles,
       activeRole: 'customer' as const,
       isSpecialist: selectedRoleType === 'specialist' || selectedRoleType === 'both',
-      specialistStatus: (selectedRoleType === 'specialist' || selectedRoleType === 'both') ? 'pending' : 'not_applied',
+      isSeller: selectedRoleType === 'specialist' || selectedRoleType === 'both',
+      sellerStatus: (selectedRoleType === 'specialist' || selectedRoleType === 'both') ? 'approved' : 'not_applied',
+      specialistStatus: (selectedRoleType === 'specialist' || selectedRoleType === 'both') ? 'approved' : 'not_applied',
       createdAt: nowIso
     };
 
     setSignupLoading(true);
     try {
-      const ok = signup(userData as any, signupPassword || '123456');
-      if (ok) {
+      let hasDetailedSignupError = false;
+      const createdUser = await signup(userData as any, signupPassword || '123456', (stage, error) => {
+        hasDetailedSignupError = true;
+        const code = typeof error === 'object' && error !== null && 'code' in error
+          ? String(error.code)
+          : '';
+        if (stage === 'profile') {
+          if (code.includes('resource-exhausted')) {
+            setErrorMsg('অ্যাকাউন্ট তৈরি হয়েছে, কিন্তু Firebase-এর ডেটাবেস কোটা শেষ হওয়ায় প্রোফাইল সেভ হয়নি। একই ইমেইলে আবার সাইনআপ করবেন না; কোটা/সংযোগ ঠিক করে লগইন করে আবার চেষ্টা করুন।');
+          } else if (code.includes('permission-denied')) {
+            setErrorMsg('অ্যাকাউন্ট তৈরি হয়েছে, কিন্তু Firebase অনুমতি না দেওয়ায় প্রোফাইল সেভ হয়নি। একই ইমেইলে আবার সাইনআপ করবেন না; Firebase Rules ঠিক করে লগইন করুন।');
+          } else {
+            setErrorMsg('Firebase অ্যাকাউন্ট তৈরি হয়েছে, কিন্তু প্রোফাইল ডেটাবেসে সেভ হয়নি। একই ইমেইলে আবার সাইনআপ করবেন না; সংযোগ ঠিক করে লগইন করে আবার চেষ্টা করুন।');
+          }
+          return;
+        }
+        if (code.includes('email-already-in-use')) {
+          setErrorMsg('এই ইমেইলে Firebase অ্যাকাউন্ট আগে থেকেই আছে। নতুন সাইনআপ নয়—লগইন করুন বা পাসওয়ার্ড রিসেট করুন।');
+        } else if (code.includes('weak-password')) {
+          setErrorMsg('পাসওয়ার্ড কমপক্ষে ৬ অক্ষরের হতে হবে।');
+        } else if (code.includes('invalid-email')) {
+          setErrorMsg('ইমেইল ঠিকানাটি সঠিক নয়।');
+        } else if (code.includes('network-request-failed')) {
+          setErrorMsg('Firebase Auth-এ সংযোগ হচ্ছে না। ইন্টারনেট/নেটওয়ার্ক ঠিক করে আবার চেষ্টা করুন।');
+        } else {
+          setErrorMsg('Firebase অ্যাকাউন্ট তৈরি করতে পারেনি। লগইন তথ্য ও Firebase Auth-এর অবস্থা পরীক্ষা করুন।');
+        }
+      });
+      if (createdUser) {
         setErrorMsg('');
         onSuccess();
         onClose();
-      } else {
-        setErrorMsg('অ্যাকাউন্ট তৈরিতে সমস্যা হয়েছে। আবার চেষ্টা করুন।');
+      } else if (!hasDetailedSignupError) {
+        setErrorMsg('সাইনআপ সম্পন্ন হয়নি। ইমেইল ও পাসওয়ার্ড যাচাই করে আবার চেষ্টা করুন।');
       }
-    } catch (err: any) {
-      setErrorMsg('অ্যাকাউন্ট তৈরি করতে সমস্যা হয়েছে।');
+    } catch (err) {
+      console.error('[Signup form] Unexpected signup failure:', err);
+      setErrorMsg('সাইনআপে অপ্রত্যাশিত সমস্যা হয়েছে। আবার চেষ্টা করুন।');
     } finally {
       setSignupLoading(false);
     }

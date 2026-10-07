@@ -316,9 +316,10 @@ export interface PaymentOrder {
 
 export interface CompanyBillItem {
   id: string;
+  orderId?: string;
   payerName: string;
   payerPhone: string;
-  gateway: 'bKash' | 'Nagad' | 'Rocket' | 'Bank' | 'Card';
+  gateway: 'bKash' | 'Nagad' | 'Rocket' | 'Upay' | 'Bank' | 'Card';
   transactionId: string;
   amount: number;
   category: string;
@@ -506,7 +507,9 @@ export interface NotificationItem {
 
 export interface DirectMessageItem {
   id: string;
+  conversationId?: string;
   senderId?: string;
+  recipientId?: string;
   senderEmail?: string;
   recipientEmail?: string;
   senderName: string;
@@ -562,6 +565,7 @@ export interface ChatMessage {
 
 export interface ActiveChatWindow {
   id: string;
+  mode?: 'buying' | 'selling' | 'all';
   orderId?: string;
   senderName: string;
   senderRole?: string;
@@ -682,6 +686,8 @@ export interface MarketplaceJob {
   proposalsCount: number;
   status: 'open' | 'assigned' | 'in_progress' | 'delivered' | 'completed' | 'cancelled';
   isDirectOffer?: boolean;
+  offerType?: 'work_first' | 'paid';
+  isWorkFirst?: boolean;
   targetSellerId?: string;
   targetSellerName?: string;
   expiresAt?: string;
@@ -778,6 +784,7 @@ export interface MarketplaceOrder {
   deliveryDays?: number;
   offerType?: string;
   isWorkFirst?: boolean;
+  isWorkFirstPaid?: boolean;
   requirements?: string;
   deliveryType?: 'canva_auto' | 'file_download' | 'email_whatsapp' | 'auto' | 'manual' | string;
   canvaInviteLink?: string;
@@ -848,5 +855,3 @@ export interface LiveClassSession {
   courseThumbnail?: string;
   createdAt: string;
 }
-
-

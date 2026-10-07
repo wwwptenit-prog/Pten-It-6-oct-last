@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useData } from '../context/DataContext';
 import { ChatMessage, ActiveChatWindow, DirectOfferMeta } from '../types';
+import { isDirectMessageVisibleToUser, isNotificationVisibleToUser } from '../utils/marketplaceModeScope';
 import { DirectProjectOfferChatCard } from './DirectProjectOfferChatCard';
 import { SendDirectOfferModal } from './SendDirectOfferModal';
 import {
@@ -276,7 +277,9 @@ export const FloatingMessengerWindows: React.FC<FloatingMessengerWindowsProps> =
   const defaultHistory = isSellerMode ? sellerDefaultHistory : buyerDefaultHistory;
 
   // Dynamic list merging active chat windows
-  const activeWindowsAsConversations: ConversationItem[] = (activeChatWindows || []).map(w => ({
+  const activeWindowsAsConversations: ConversationItem[] = (activeChatWindows || [])
+    .filter(w => !w.mode || w.mode === 'all' || w.mode === (isSellerMode ? 'selling' : 'buying'))
+    .map(w => ({
     id: w.id,
     name: w.senderName,
     avatar: w.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
@@ -288,7 +291,7 @@ export const FloatingMessengerWindows: React.FC<FloatingMessengerWindowsProps> =
     time: w.messages[w.messages.length - 1]?.time || 'এখন',
     isOnline: true,
     category: isSellerMode ? 'orders' : 'sellers'
-  }));
+    }));
 
   const allConversationsMap = new Map<string, ConversationItem>();
   activeWindowsAsConversations.forEach(c => allConversationsMap.set(c.id, c));
@@ -296,15 +299,8 @@ export const FloatingMessengerWindows: React.FC<FloatingMessengerWindowsProps> =
   // Add real direct messages
   if (directMessages && directMessages.length > 0) {
     directMessages.forEach(dm => {
-      // Check recipient targeting by role and mode
-      if (dm.recipientRole && dm.recipientRole !== 'all') {
-        if (isSellerMode && dm.recipientRole !== 'seller') return;
-        if (!isSellerMode && dm.recipientRole !== 'buyer' && dm.recipientRole !== 'customer') return;
-      }
-      if (dm.mode && dm.mode !== 'all') {
-        if (isSellerMode && dm.mode !== 'selling') return;
-        if (!isSellerMode && dm.mode !== 'buying') return;
-      }
+      if (!isDirectMessageVisibleToUser(dm, currentUser, isSellerMode ? 'selling' : 'buying')) return;
+
       if (!allConversationsMap.has(dm.id)) {
         allConversationsMap.set(dm.id, {
           id: dm.id,
@@ -331,6 +327,7 @@ export const FloatingMessengerWindows: React.FC<FloatingMessengerWindowsProps> =
         return { ...c, unreadCount: 0 };
       }
       const directMatch = directMessages?.find(m => {
+        if (!isDirectMessageVisibleToUser(m, currentUser, isSellerMode ? 'selling' : 'buying')) return false;
         if (m.id === c.id || m.orderId === c.id) return true;
         const sender = (m.senderName || '').toLowerCase();
         const cid = c.id.toLowerCase();
@@ -374,44 +371,9 @@ export const FloatingMessengerWindows: React.FC<FloatingMessengerWindowsProps> =
     });
 
   // Filter notifications scoped to the current active user and mode
-  const roleScopedNotifications = (notifications || []).filter(n => {
-    // If targeted to a specific user ID or email, check against currentUser
-    if (n.recipientId && n.recipientId !== 'all') {
-      const currentId = currentUser?.id;
-      const currentEmail = currentUser?.email;
-      if (currentId || currentEmail) {
-        if (n.recipientId !== currentId && n.recipientId !== currentEmail) {
-          return false;
-        }
-      }
-    }
-
-    // Filter by recipientRole
-    if (n.recipientRole && n.recipientRole !== 'all') {
-      if (isSellerMode && n.recipientRole !== 'seller') return false;
-      if (!isSellerMode && n.recipientRole !== 'buyer') return false;
-    }
-
-    if (n.mode === 'selling') return isSellerMode;
-    if (n.mode === 'buying') return !isSellerMode;
-    if (n.mode === 'both') return true;
-
-    if (isSellerMode) {
-      if (n.recipientRole === 'seller' || n.category === 'seller' || n.category === 'payout') return true;
-      if (n.recipientRole === 'buyer' || n.category === 'buyer' || n.category === 'course') return false;
-      const t = (n.title || '').toLowerCase();
-      const m = (n.message || '').toLowerCase();
-      if (t.includes('অ্যাসাইনমেন্ট') || t.includes('কোর্স') || t.includes('মডিউল') || t.includes('ক্লাস') || m.includes('মডিউল')) return false;
-      return true;
-    } else {
-      if (n.recipientRole === 'buyer' || n.category === 'buyer' || n.category === 'course') return true;
-      if (n.recipientRole === 'seller' || n.category === 'seller' || n.category === 'payout') return false;
-      const t = (n.title || '').toLowerCase();
-      const m = (n.message || '').toLowerCase();
-      if (t.includes('ক্লাইন্ট') || t.includes('ক্লায়েন্ট') || t.includes('সেলিং') || t.includes('উইথড্র') || t.includes('পেআউট') || m.includes('পেআউট')) return false;
-      return true;
-    }
-  });
+  const roleScopedNotifications = !currentUser ? [] : (notifications || []).filter(n =>
+    isNotificationVisibleToUser(n, currentUser, isSellerMode ? 'selling' : 'buying')
+  );
 
   const handleSelectConversation = (convoId: string) => {
     setSelectedConversationId(convoId);
@@ -423,22 +385,12 @@ export const FloatingMessengerWindows: React.FC<FloatingMessengerWindowsProps> =
     const existing = activeChatWindows?.find(w => w.id === convoId);
     if (!existing) {
       const convo = conversationList.find(c => c.id === convoId);
-      const initMsgs = initialThreadHistories[convoId] || [
-        {
-          id: `msg-${convoId}-init`,
-          senderName: convo?.name || 'মার্কেটপ্লেস সেলার',
-          senderAvatar: convo?.avatar,
-          isSelf: false,
-          text: convo?.lastMessage || 'আসসালামু আলাইকুম! আপনার প্রজেক্টের রিকোয়ারমেন্ট বা সার্ভিস সম্পর্কে জানান।',
-          time: convo?.time || '১০ মিনিট আগে'
-        }
-      ];
       openChatWindow({
         id: convoId,
         senderName: convo?.name || 'মার্কেটপ্লেস সেলার',
         senderRole: convo?.role || 'সেলার',
         senderAvatar: convo?.avatar,
-        initialMessage: initMsgs[0]?.text
+        initialMessage: convo?.lastMessage
       });
     }
 
@@ -543,7 +495,22 @@ export const FloatingMessengerWindows: React.FC<FloatingMessengerWindowsProps> =
     }
   ];
 
-  const topSellers = isSellerMode ? sellerStories : buyerStories;
+  const topSellers = [
+    {
+      id: 'my-note',
+      name: 'Your note',
+      avatar: currentUser?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=100&q=80',
+      isMe: true,
+      noteText: userNote
+    },
+    ...conversationList.map(conversation => ({
+      id: `story-${conversation.id}`,
+      name: conversation.name,
+      avatar: conversation.avatar,
+      isOnline: conversation.isOnline,
+      convoId: conversation.id
+    }))
+  ];
 
   // Rich per-conversation message thread histories for realistic marketplace communication
   const initialThreadHistories: Record<string, ChatMessage[]> = {
@@ -656,16 +623,7 @@ export const FloatingMessengerWindows: React.FC<FloatingMessengerWindowsProps> =
       senderName: conversationList.find(c => c.id === selectedConversationId)?.name || 'মার্কেটপ্লেস সেলার',
       senderRole: conversationList.find(c => c.id === selectedConversationId)?.role || 'টপ রেটেড সেলার',
       senderAvatar: conversationList.find(c => c.id === selectedConversationId)?.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
-      messages: initialThreadHistories[selectedConversationId] || [
-        {
-          id: `msg-${selectedConversationId}-1`,
-          senderName: conversationList.find(c => c.id === selectedConversationId)?.name || 'সেলার',
-          senderAvatar: conversationList.find(c => c.id === selectedConversationId)?.avatar,
-          isSelf: false,
-          text: conversationList.find(c => c.id === selectedConversationId)?.lastMessage || 'আসসালামু আলাইকুম! আপনার প্রজেক্টের রিকোয়ারমেন্ট বা সার্ভিস সম্পর্কে জানান।',
-          time: conversationList.find(c => c.id === selectedConversationId)?.time || '১০ মিনিট আগে'
-        }
-      ]
+      messages: []
     } : null
   );
 
@@ -713,7 +671,7 @@ export const FloatingMessengerWindows: React.FC<FloatingMessengerWindowsProps> =
       {/* 1. FLOATING MINI CHAT POPUP WINDOWS (DESKTOP ONLY - NEVER ON PHONE VIEW) */}
       {!isOpen && activeChatWindows && activeChatWindows.length > 0 && (
         <div className="hidden sm:flex fixed bottom-0 right-6 z-[9990] items-end justify-end gap-3 p-0 pointer-events-none font-bengali">
-          {activeChatWindows.map(win => (
+          {activeChatWindows.filter(win => !win.mode || win.mode === 'all' || win.mode === (isSellerMode ? 'selling' : 'buying')).map(win => (
             <SingleChatWindow
               key={win.id}
               win={win}
@@ -3286,4 +3244,3 @@ const FullScreenChatThread: React.FC<FullScreenChatThreadProps> = ({
 };
 
 export { MarketplaceMessengerView } from './MarketplaceMessengerView';
-

@@ -115,7 +115,7 @@ export const AdminFloatingHub: React.FC<AdminFloatingHubProps> = ({
 
   // Calculate Pending Tasks
   const pendingBills = (effectiveBills || []).filter((b: any) => b && b.status === 'pending');
-  const pendingApplicants = (users || []).filter((u: any) => u && (u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending'));
+  const pendingApplicants = (users || []).filter((u: any) => u && (u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending' || u.sellerStatus === 'pending' || u.specialistApplication?.status === 'pending'));
   const totalPending = pendingBills.length + pendingApplicants.length;
 
   const handleVerifyItem = (id: string) => {
@@ -393,7 +393,7 @@ export const AdminFloatingHub: React.FC<AdminFloatingHubProps> = ({
                         <span className="text-[10px] text-amber-400 font-mono">আবেদনকারী</span>
                       </div>
                       <p className="text-[10px] text-slate-400 font-normal">
-                        অভিজ্ঞতা: {u.mentorApplication?.experience || 'উল্লেখ নেই'} | স্কিল: {u.mentorApplication?.expertise || 'General'}
+                        অভিজ্ঞতা: {u.mentorApplication?.experienceYears || u.specialistApplication?.experienceYears || 'উল্লেখ নেই'} | স্কিল: {(u.mentorApplication?.expertise || u.specialistApplication?.expertise || []).join(', ') || 'উল্লেখ নেই'}
                       </p>
                       <div className="flex items-center justify-end gap-1.5 pt-1 border-t border-slate-700/80">
                         <button
@@ -408,9 +408,10 @@ export const AdminFloatingHub: React.FC<AdminFloatingHubProps> = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            approveMentorApplication(u.id);
-                            playAppSound('success');
+                          onClick={async () => {
+                            const approved = await approveMentorApplication(u.id);
+                            if (approved) playAppSound('success');
+                            else console.error(`[Mentorship] Failed to save approval for ${u.id}`);
                           }}
                           className="px-3 py-1 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold rounded-lg text-[10px] shadow transition"
                         >

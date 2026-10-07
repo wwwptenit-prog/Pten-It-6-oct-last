@@ -24,7 +24,8 @@ const CourseLearningPage = React.lazy(() => import('./components/CourseLearningP
 const CertificateModal = React.lazy(() => import('./components/CertificateModal').then(m => ({ default: m.CertificateModal })));
 const CertificateVerifyPage = React.lazy(() => import('./components/CertificateVerifyPage').then(m => ({ default: m.CertificateVerifyPage })));
 const AuthModal = React.lazy(() => import('./components/AuthModal').then(m => ({ default: m.AuthModal })));
-const AdminPanel = React.lazy(() => import('./components/AdminPanel').then(m => ({ default: m.AdminPanel })));
+const loadAdminPanel = () => import('./components/AdminPanel').then(m => ({ default: m.AdminPanel }));
+const AdminPanel = React.lazy(loadAdminPanel);
 const TeacherDashboard = React.lazy(() => import('./components/TeacherDashboard').then(m => ({ default: m.TeacherDashboard })));
 const CustomerDashboard = React.lazy(() => import('./components/CustomerDashboard').then(m => ({ default: m.CustomerDashboard })));
 const MarketplaceSection = React.lazy(() => import('./components/MarketplaceSection').then(m => ({ default: m.MarketplaceSection })));
@@ -58,7 +59,12 @@ const MainAppContent: React.FC = () => {
     if (initialUrlParams.gigId) return 'marketplace';
     if (initialUrlParams.courseId) return 'courses';
     if (initialUrlParams.certId) return 'verify-certificate';
-    return initialUrlParams.tab || 'home';
+    const tab = initialUrlParams.tab || 'home';
+    const protectedTabs = ['admin', 'teacher-dashboard', 'customer-dashboard', 'student-dashboard', 'dashboard', 'learning'];
+    if (protectedTabs.includes(tab) && !currentUser) {
+      return 'home';
+    }
+    return tab;
   });
   const [marketplaceCategory, setMarketplaceCategory] = useState<string>(() => {
     return initialUrlParams.category || 'All';
@@ -118,6 +124,7 @@ const MainAppContent: React.FC = () => {
   }
   const [navHistory, setNavHistory] = useState<NavHistoryItem[]>([]);
   const [previousNavState, setPreviousNavState] = useState<NavHistoryItem | null>(null);
+  const [authReturnTab, setAuthReturnTab] = useState('home');
   const [learningInitialTab, setLearningInitialTab] = useState<'video' | 'live' | 'assignment' | 'quiz' | 'resources' | 'certificate' | 'notes' | 'ai-tutor'>('video');
 
   const handleSetActiveTab = (tab: string, category?: string, pushHistory = true) => {
@@ -127,6 +134,8 @@ const MainAppContent: React.FC = () => {
 
     const protectedTabs = ['admin', 'teacher-dashboard', 'customer-dashboard', 'student-dashboard', 'learning'];
     if (protectedTabs.includes(tab) && !currentUser) {
+      setAuthReturnTab(tab);
+      if (tab === 'admin') void loadAdminPanel();
       setAuthModalOpen(true);
       return;
     }
@@ -609,9 +618,23 @@ const MainAppContent: React.FC = () => {
         {authModalOpen && (
           <AuthModal
             isOpen={authModalOpen}
-            onClose={() => setAuthModalOpen(false)}
+            onClose={() => {
+              setAuthReturnTab('home');
+              setAuthModalOpen(false);
+            }}
             onSuccess={() => {
-              handleSetActiveTab('home');
+              let signedInUser: { role?: string } | null = null;
+              try {
+                const savedUser = localStorage.getItem('ptenit_database_v2_current_user');
+                signedInUser = savedUser ? JSON.parse(savedUser) : null;
+              } catch (error) {
+                console.error('[Auth] Could not restore signed-in user after login:', error);
+              }
+              const targetTab = authReturnTab === 'admin' && signedInUser?.role !== 'admin'
+                ? 'home'
+                : authReturnTab;
+              setAuthReturnTab('home');
+              setActiveTab(targetTab);
             }}
           />
         )}

@@ -49,6 +49,12 @@ import {
   initialSubmissions
 } from '../data/initialData';
 import { auth, db } from '../services/firebase';
+import {
+  getDirectConversationId,
+  isDirectMessageInMarketplaceMode,
+  isNotificationInMarketplaceMode,
+  isNotificationVisibleToUser
+} from '../utils/marketplaceModeScope';
 import { 
   onAuthStateChanged, 
   signInWithEmailAndPassword, 
@@ -65,7 +71,6 @@ import {
   deleteDocFromFirestore, 
   subscribeToCollection, 
   syncCollectionToFirestore,
-  fetchServerCollection
 } from '../services/firestoreSync';
 
 interface DataContextType {
@@ -80,7 +85,7 @@ interface DataContextType {
   setPtenitUser: (user: User | null) => void;
   setMarketplaceUser: (user: User | null) => void;
   loginMarketplace: (emailOrPhone: string, pass: string) => boolean;
-  signupMarketplace: (userData: Omit<User, 'id' | 'createdAt'>, pass: string) => boolean;
+  signupMarketplace: (userData: Omit<User, 'id' | 'createdAt'>, pass: string) => Promise<User | null>;
   logoutMarketplace: () => void;
   demoLoginMarketplace: (role: 'customer' | 'instructor') => void;
   updateMarketplaceProfile: (data: Partial<User>) => void;
@@ -167,7 +172,11 @@ interface DataContextType {
   login: (emailOrPhone: string, pass: string) => boolean;
   loginWithGoogle: (preferredRole?: 'customer' | 'specialist' | 'both') => Promise<boolean>;
   loginWithGoogleDirect: (email: string, displayName: string, preferredRole?: 'customer' | 'specialist' | 'both') => boolean;
-  signup: (userData: Omit<User, 'id' | 'createdAt'>, pass: string) => boolean;
+  signup: (
+    userData: Omit<User, 'id' | 'createdAt'>,
+    pass: string,
+    onError?: (stage: 'auth' | 'profile', error: unknown) => void
+  ) => Promise<User | null>;
   logout: () => void;
   demoLogin: (role: 'student' | 'instructor' | 'customer' | 'admin') => void;
   switchRole: (newRole: 'customer' | 'specialist' | 'instructor' | 'admin' | 'student') => void;
@@ -251,8 +260,8 @@ interface DataContextType {
   toggleOfferSound: () => void;
 
   // Mentorship Application & Role Actions
-  applyForMentorship: (data: { name?: string; email?: string; expertise: string[]; experienceYears: string; bio: string; portfolioUrl?: string; proposedCourseTopic?: string; phone?: string }) => void;
-  approveMentorApplication: (userId?: string) => void;
+  applyForMentorship: (data: { name?: string; email?: string; expertise: string[]; experienceYears: string; bio: string; portfolioUrl?: string; proposedCourseTopic?: string; phone?: string }) => Promise<boolean>;
+  approveMentorApplication: (userId?: string) => Promise<boolean>;
   rejectMentorApplication: (userId?: string, reason?: string) => void;
   
   // Direct Messages & Popovers
@@ -263,7 +272,8 @@ interface DataContextType {
   markAllConversationsRead: (mode?: string) => void;
   markDirectMessageRead: (id: string) => void;
   markAllDirectMessagesRead: (mode?: string) => void;
-  sendDirectMessage: (msg: Omit<DirectMessageItem, 'id' | 'read'>) => void;
+  deleteDirectMessage: (id: string) => void;
+  sendDirectMessage: (msg: Omit<DirectMessageItem, 'id' | 'read'>) => Promise<boolean>;
   openChatWindow: (contact: { id?: string; orderId?: string; isClosed?: boolean; isReadOnly?: boolean; targetUserId?: string; senderName: string; senderRole?: string; senderAvatar?: string; initialMessage?: string }) => void;
   closeChatWindow: (id: string) => void;
   toggleMinimizeChatWindow: (id: string) => void;
@@ -319,6 +329,20 @@ interface DataContextType {
   // Company Billing & Ledger
   companyBills: CompanyBillItem[];
   addCompanyBill: (bill: CompanyBillItem) => void;
+  submitWorkFirstBill: (
+    orderId: string,
+    payment: {
+      payerName: string;
+      payerPhone: string;
+      gateway: CompanyBillItem['gateway'];
+      transactionId: string;
+      rating: number;
+      reviewComment: string;
+      totalAmount?: number;
+      penaltyApplied?: boolean;
+      penaltyAmount?: number;
+    }
+  ) => Promise<boolean>;
   verifyCompanyBill: (billId: string, verifiedBy?: string) => void;
   rejectCompanyBill: (billId: string, reason?: string) => void;
   deleteCompanyBill: (billId: string) => void;
@@ -702,6 +726,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  useEffect(() => {
+    if (!currentUser) return;
+    setUsers(prev => {
+      if (prev.some(user => user.id === currentUser.id)) return prev;
+      const next = [currentUser, ...prev];
+      localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(next));
+      return next;
+    });
+  }, [currentUser?.id]);
+
   const [enrollments, setEnrollments] = useState<Enrollment[]>(() => {
     const saved = localStorage.getItem(`${STORAGE_KEY}_enrollments`);
     if (saved) {
@@ -1032,6 +1066,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 existingUser.activeRole = 'admin';
                 existingUser.roles = ['admin'];
               }
+              setUsers(prev => {
+                const next = [existingUser, ...prev.filter(user => user.id !== existingUser.id)];
+                localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(next));
+                return next;
+              });
               setCurrentUser(existingUser);
               setPtenitUser(existingUser);
               setMarketplaceUser(existingUser);
@@ -1048,6 +1087,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 createdAt: new Date().toISOString().split('T')[0]
               };
               await syncDocToFirestore('users', fbUser.uid, newUser);
+              setUsers(prev => {
+                const next = [newUser, ...prev.filter(user => user.id !== newUser.id)];
+                localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(next));
+                return next;
+              });
               setCurrentUser(newUser);
               setPtenitUser(newUser);
               setMarketplaceUser(newUser);
@@ -1178,23 +1222,44 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }));
 
     unsubs.push(subscribeToCollection<NotificationItem>('notifications', (items) => {
-      if (items && items.length > 0) {
-        setNotifications(items);
-        localStorage.setItem(`${STORAGE_KEY}_notifications`, JSON.stringify(items));
-      }
+      setNotifications(items || []);
+      localStorage.setItem(`${STORAGE_KEY}_notifications`, JSON.stringify(items || []));
     }));
 
     unsubs.push(subscribeToCollection<DirectMessageItem>('directMessages', (items) => {
-      if (items && items.length > 0) {
-        setDirectMessages(items);
-        localStorage.setItem(`${STORAGE_KEY}_direct_messages`, JSON.stringify(items));
-      }
+      setDirectMessages(items || []);
+      localStorage.setItem(`${STORAGE_KEY}_direct_messages`, JSON.stringify(items || []));
     }));
 
     unsubs.push(subscribeToCollection<User>('users', (items) => {
       if (items && items.length > 0) {
         setUsers(items);
         localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(items));
+
+        const savedProfile = [
+          localStorage.getItem(`${STORAGE_KEY}_current_user`),
+          localStorage.getItem(`${STORAGE_KEY}_ptenit_user`),
+          localStorage.getItem(`${STORAGE_KEY}_marketplace_user`)
+        ].find(Boolean);
+        let savedUser: User | undefined;
+        if (savedProfile) {
+          try {
+            savedUser = JSON.parse(savedProfile) as User;
+          } catch (error) {
+            console.warn('[Firestore Users] Could not read the saved active profile:', error);
+          }
+        }
+        const authUser = auth.currentUser
+          ? items.find(user => user.id === auth.currentUser?.uid)
+          : undefined;
+        const activeUser = authUser ||
+          (savedUser
+            ? items.find(user =>
+                user.id === savedUser?.id ||
+                (savedUser?.email && user.email?.toLowerCase() === savedUser.email.toLowerCase())
+              )
+            : undefined);
+        if (activeUser) setCurrentUser(activeUser);
       }
     }));
 
@@ -1265,74 +1330,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }, () => {});
       unsubs.push(unsubSettings);
     } catch {}
-
-    // Immediate Server Storage fetch (instant load for mobile & cPanel environments)
-    const loadServerBackups = async () => {
-      try {
-        const [srvSettings, srvOrders, srvUsers, srvMktOrders, srvCourses, srvNotifs] = await Promise.all([
-          fetchServerCollection<SiteSettings>('siteSettings'),
-          fetchServerCollection<PaymentOrder>('orders'),
-          fetchServerCollection<User>('users'),
-          fetchServerCollection<MarketplaceOrder>('marketplaceOrders'),
-          fetchServerCollection<Course>('courses'),
-          fetchServerCollection<NotificationItem>('notifications'),
-        ]);
-
-        if (srvSettings && srvSettings.length > 0) {
-          const defaultSettings = (srvSettings as any).find((s: any) => s.id === 'default') || srvSettings[0];
-          if (defaultSettings) setSiteSettings(prev => ({ ...prev, ...defaultSettings }));
-        }
-        if (srvOrders && srvOrders.length > 0) {
-          setOrders(prev => {
-            const map = new Map<string, PaymentOrder>();
-            prev.forEach(p => map.set(p.id, p));
-            srvOrders.forEach(o => map.set(o.id, o));
-            return Array.from(map.values());
-          });
-        }
-        if (srvUsers && srvUsers.length > 0) {
-          setUsers(prev => {
-            const map = new Map<string, User>();
-            prev.forEach(u => map.set(u.id, u));
-            srvUsers.forEach(u => map.set(u.id, u));
-            return Array.from(map.values());
-          });
-        }
-        if (srvNotifs && srvNotifs.length > 0) {
-          setNotifications(prev => {
-            const map = new Map<string, NotificationItem>();
-            prev.forEach(n => map.set(n.id, n));
-            srvNotifs.forEach(n => map.set(n.id, n));
-            return Array.from(map.values());
-          });
-        }
-        if (srvMktOrders && srvMktOrders.length > 0) {
-          setMarketplaceOrders(prev => {
-            const map = new Map<string, MarketplaceOrder>();
-            prev.forEach(m => map.set(m.id, m));
-            srvMktOrders.forEach(m => map.set(m.id, m));
-            return Array.from(map.values());
-          });
-        }
-        if (srvCourses && srvCourses.length > 0) {
-          setCourses(prev => {
-            const map = new Map<string, Course>();
-            prev.forEach(c => map.set(c.id, c));
-            srvCourses.forEach(c => map.set(c.id, c));
-            return Array.from(map.values());
-          });
-        }
-      } catch (e) {
-        // Non-blocking fallback
-      }
-    };
-    loadServerBackups();
-
-    // Auto sync server backup data every 10 seconds for real-time sync across devices/cPanel
-    const autoSyncInterval = setInterval(() => {
-      loadServerBackups();
-    }, 10000);
-    unsubs.push(() => clearInterval(autoSyncInterval));
 
     // First-run database initialization (seeds Firestore & server storage if empty)
     const seedDatabaseIfNeeded = async () => {
@@ -1525,11 +1522,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         alert("আপনার একাউন্টটি সাময়িকভাবে স্থগিত করা হয়েছে। এডমিনের সাথে যোগাযোগ করুন।");
         return false;
       }
-      setCurrentUser(user);
-      setPtenitUser(user);
-      setMarketplaceUser(user);
-      localStorage.setItem(`${STORAGE_KEY}_current_user`, JSON.stringify(user));
-      syncDocToFirestore('users', user.id, user);
+      const signedInUser = user;
+      setCurrentUser(signedInUser);
+      setPtenitUser(signedInUser);
+      setMarketplaceUser(signedInUser);
+      setUsers(prev => {
+        const next = [signedInUser, ...prev.filter(existing => existing.id !== signedInUser.id)];
+        localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(next));
+        return next;
+      });
+      localStorage.setItem(`${STORAGE_KEY}_current_user`, JSON.stringify(signedInUser));
       return true;
     }
 
@@ -1572,13 +1574,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 2. New Google user registration
     const isAdminUser = cleanEmail === 'mdskazisohag@gmail.com' || cleanEmail === 'admin@ptenit.com';
     const isSpec = preferredRole === 'specialist' || preferredRole === 'both';
-    const assignedRole = isAdminUser ? 'admin' : (preferredRole === 'specialist' ? 'instructor' : 'customer');
+    const assignedRole = isAdminUser ? 'admin' : (preferredRole === 'specialist' ? 'specialist' : 'customer');
     const assignedRoles: ('customer' | 'specialist' | 'instructor' | 'admin')[] = isAdminUser
       ? ['admin', 'customer', 'specialist', 'instructor']
       : preferredRole === 'specialist'
-      ? ['specialist', 'instructor']
+      ? ['specialist']
       : preferredRole === 'both'
-      ? ['customer', 'specialist', 'instructor']
+      ? ['customer', 'specialist']
       : ['customer'];
 
     const newId = uid || `usr-g-${Date.now()}`;
@@ -1591,7 +1593,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       roles: assignedRoles,
       activeRole: isAdminUser ? 'admin' : (preferredRole === 'specialist' ? 'specialist' : 'customer'),
       isSpecialist: isSpec,
-      specialistStatus: isSpec ? 'pending' : 'not_applied',
+      isSeller: isSpec,
+      sellerStatus: isSpec ? 'approved' : 'not_applied',
+      specialistStatus: isSpec ? 'approved' : 'not_applied',
       avatar,
       createdAt: new Date().toISOString().split('T')[0]
     };
@@ -1629,71 +1633,59 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return true;
   };
 
-  const signup = (userData: Omit<User, 'id' | 'createdAt'>, pass: string): boolean => {
-    const newId = `usr-${Date.now()}`;
-    const newUser: User = {
-      ...userData,
-      id: newId,
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-
-    const notifyAdminNewUser = (userCreated: User) => {
-      const adminNotif: NotificationItem = {
-        id: `notif-user-${Date.now()}`,
-        title: `নতুন ইউজার রেজিস্ট্রেশন: ${userCreated.name}`,
-        message: `${userCreated.name} (${userCreated.email || userCreated.mobile}) সফলভাবে ${userCreated.role === 'admin' ? 'এডমিন' : userCreated.role === 'instructor' ? 'টিচার/মেন্টর' : userCreated.isSpecialist ? 'সেলার/স্পেশালিস্ট' : 'ক্লায়েন্ট/শিক্ষার্থী'} হিসেবে যোগ দিয়েছেন।`,
-        time: 'এইমাত্র',
-        read: false,
-        type: 'info',
-        targetTab: 'admin',
-        recipientRole: 'admin'
-      };
-      if (userCreated.role === 'admin') {
-        setNotifications(prev => [adminNotif, ...prev]);
-      }
-      syncDocToFirestore('notifications', adminNotif.id, adminNotif);
-    };
-
-    // 1. Immediately store in users state and localStorage so admin and user have instant access
-    setUsers(prev => {
-      const exists = prev.some(u => u.id === newId || (newUser.email && u.email.toLowerCase() === newUser.email.toLowerCase()));
-      const next = exists
-        ? prev.map(u => (u.id === newId || (newUser.email && u.email.toLowerCase() === newUser.email.toLowerCase()) ? newUser : u))
-        : [newUser, ...prev];
-      localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(next));
-      return next;
-    });
-    setCurrentUser(newUser);
-    setPtenitUser(newUser);
-    setMarketplaceUser(newUser);
-    localStorage.setItem(`${STORAGE_KEY}_current_user`, JSON.stringify(newUser));
-
-    // 2. Synchronize to cPanel server_data/users.json AND Firebase Firestore
-    syncDocToFirestore('users', newId, newUser);
-    notifyAdminNewUser(newUser);
-
-    // 3. Connect to Firebase Auth if email provided
-    if (userData.email && userData.email.includes('@')) {
-      createUserWithEmailAndPassword(auth, userData.email, pass)
-        .then((cred) => {
-          const fbUser = { ...newUser, id: cred.user.uid };
-          syncDocToFirestore('users', cred.user.uid, fbUser);
-          setUsers(prev => {
-            const next = prev.map(u => (u.id === newId ? fbUser : u));
-            localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(next));
-            return next;
-          });
-          setCurrentUser(fbUser);
-          setPtenitUser(fbUser);
-          setMarketplaceUser(fbUser);
-          localStorage.setItem(`${STORAGE_KEY}_current_user`, JSON.stringify(fbUser));
-        })
-        .catch((err) => {
-          console.warn('[Firebase Auth Signup]', err.code);
-        });
+  const signup = async (
+    userData: Omit<User, 'id' | 'createdAt'>,
+    pass: string,
+    onError?: (stage: 'auth' | 'profile', error: unknown) => void
+  ): Promise<User | null> => {
+    if (!userData.email?.includes('@') || !pass.trim()) {
+      console.error('[Signup] A valid email and password are required.');
+      return null;
     }
 
-    return true;
+    try {
+      const credential = await createUserWithEmailAndPassword(auth, userData.email.trim(), pass);
+      const newUser: User = {
+        ...userData,
+        id: credential.user.uid,
+        email: userData.email.trim().toLowerCase(),
+        createdAt: new Date().toISOString().split('T')[0]
+      };
+      let profileWriteError: unknown;
+      const persisted = await syncDocToFirestore('users', newUser.id, newUser, error => {
+        profileWriteError = error;
+      });
+      if (!persisted) {
+        console.error(`[Signup] Profile ${newUser.id} was not saved to Firestore.`);
+        onError?.('profile', profileWriteError);
+        return null;
+      }
+
+      setUsers(prev => {
+        const next = [newUser, ...prev.filter(user =>
+          user.id !== newUser.id && user.email.toLowerCase() !== newUser.email.toLowerCase()
+        )];
+        localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(next));
+        return next;
+      });
+      setCurrentUser(newUser);
+      setPtenitUser(newUser);
+      setMarketplaceUser(newUser);
+
+      sendCentralNotification({
+        title: `নতুন ইউজার রেজিস্ট্রেশন: ${newUser.name}`,
+        message: `${newUser.name} (${newUser.email}) নতুন অ্যাকাউন্ট খুলেছেন।`,
+        type: 'info',
+        targetTab: 'admin',
+        recipientRole: 'admin',
+        mode: 'all'
+      });
+      return newUser;
+    } catch (error) {
+      console.error('[Firebase Auth Signup] Account creation failed:', error);
+      onError?.('auth', error);
+      return null;
+    }
   };
 
   // Google Sign-In with Firebase Auth & Firestore Persistence
@@ -1733,7 +1725,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return login(emailOrPhone, pass);
   };
 
-  const signupMarketplace = (userData: Omit<User, 'id' | 'createdAt'>, pass: string): boolean => {
+  const signupMarketplace = (userData: Omit<User, 'id' | 'createdAt'>, pass: string): Promise<User | null> => {
     return signup(userData, pass);
   };
 
@@ -1742,6 +1734,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentUser(null);
     setPtenitUser(null);
     setMarketplaceUser(null);
+    setActiveChatWindows([]);
+    setActiveMessengerConversationId(null);
     localStorage.removeItem(`${STORAGE_KEY}_current_user`);
     localStorage.removeItem(`${STORAGE_KEY}_ptenit_user`);
     localStorage.removeItem(`${STORAGE_KEY}_marketplace_user`);
@@ -2284,13 +2278,45 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setContactMessages(prev => prev.map(m => m.id === id ? { ...m, read: true } : m));
   };
 
+  const [marketplaceMode, setMarketplaceModeState] = useState<'buying' | 'selling'>(() => {
+    try {
+      const saved = localStorage.getItem('marketplace_mode');
+      if (saved === 'selling' || saved === 'buying') return saved;
+    } catch {}
+    return 'buying';
+  });
+
+  const setMarketplaceMode = useCallback((mode: 'buying' | 'selling') => {
+    setMarketplaceModeState(prev => (prev === mode ? prev : mode));
+    try {
+      localStorage.setItem('marketplace_mode', mode);
+    } catch {}
+  }, []);
+
   const markNotificationRead = (id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, read: true } : n));
+    setNotifications(prev => {
+      const next = prev.map(n => n.id === id ? { ...n, read: true } : n);
+      const updated = next.find(n => n.id === id);
+      if (updated) {
+        localStorage.setItem(`${STORAGE_KEY}_notifications`, JSON.stringify(next));
+        syncDocToFirestore('notifications', id, updated);
+      }
+      return next;
+    });
   };
 
   const markAllNotificationsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
-    setDirectMessages(prev => prev.map(m => ({ ...m, read: true })));
+    setNotifications(prev => {
+      const next = prev.map(n => {
+        if (!isNotificationInMarketplaceMode(n, marketplaceMode) || n.read) return n;
+        const updated = { ...n, read: true };
+        syncDocToFirestore('notifications', n.id, updated);
+        return updated;
+      });
+      localStorage.setItem(`${STORAGE_KEY}_notifications`, JSON.stringify(next));
+      return next;
+    });
+    setDirectMessages(prev => prev.map(m => isDirectMessageInMarketplaceMode(m, marketplaceMode) ? { ...m, read: true } : m));
   };
 
   const sendCentralNotification = (notif: Omit<NotificationItem, 'id' | 'time' | 'read'>) => {
@@ -2300,11 +2326,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       time: 'এখনই',
       read: false
     };
-    setNotifications(prev => [newNotif, ...prev]);
+    setNotifications(prev => {
+      const next = [newNotif, ...prev];
+      localStorage.setItem(`${STORAGE_KEY}_notifications`, JSON.stringify(next));
+      syncDocToFirestore('notifications', newNotif.id, newNotif);
+      return next;
+    });
     playAppSound('notification');
   };
 
-  const applyForMentorship = (data: {
+  const applyForMentorship = async (data: {
     name?: string;
     email?: string;
     expertise: string[];
@@ -2313,56 +2344,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     portfolioUrl?: string;
     proposedCourseTopic?: string;
     phone?: string;
-  }) => {
-    let targetUser = currentUser || marketplaceUser;
-
-    // If no user is logged in, look up existing user or create a new applicant User
+  }): Promise<boolean> => {
+    const targetUser = currentUser || marketplaceUser;
     if (!targetUser) {
-      const applicantName = data.name?.trim() || 'নতুন ইনস্ট্রাক্টর আবেদনকারী';
-      const applicantEmail = data.email?.trim() || `teacher-${Date.now()}@ptenit.com`;
-      const applicantPhone = data.phone?.trim() || '01700000000';
-
-      const existingUser = users.find(u => 
-        (data.email && u.email.toLowerCase() === data.email.toLowerCase()) || 
-        (data.phone && u.mobile === data.phone)
-      );
-
-      if (existingUser) {
-        targetUser = existingUser;
-      } else {
-        const newApplicantUser: User = {
-          id: `teacher-applicant-${Date.now()}`,
-          name: applicantName,
-          email: applicantEmail,
-          mobile: applicantPhone,
-          role: 'instructor',
-          roles: ['instructor'],
-          createdAt: new Date().toISOString().split('T')[0],
-          isMentor: false,
-          mentorStatus: 'pending',
-          mentorApplication: {
-            expertise: data.expertise,
-            experienceYears: data.experienceYears,
-            bio: data.bio,
-            portfolioUrl: data.portfolioUrl,
-            proposedCourseTopic: data.proposedCourseTopic,
-            phone: applicantPhone,
-            appliedAt: new Date().toLocaleDateString('bn-BD', { day: 'numeric', month: 'long', year: 'numeric' }),
-            status: 'pending'
-          }
-        };
-
-        setUsers(prev => [newApplicantUser, ...prev]);
-        sendCentralNotification({
-          title: '📋 নতুন টিচার ও মেন্টরশিপ আবেদন জমা হয়েছে',
-          message: `${newApplicantUser.name} ইনস্ট্রাক্টর ও কোর্স পরিচালনার জন্য আবেদন করেছেন। এডমিন প্যানেল থেকে পর্যালোচনা করুন।`,
-          type: 'info',
-          category: 'mentor',
-          targetTab: 'admin',
-        });
-        playAppSound('notification');
-        return;
-      }
+      console.error('[Seller application] A signed-in user is required to apply.');
+      return false;
     }
 
     const updatedUser: User = {
@@ -2371,6 +2357,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: data.email?.trim() || targetUser.email,
       mobile: data.phone?.trim() || targetUser.mobile,
       mentorStatus: 'pending',
+      sellerStatus: 'pending',
+      specialistStatus: 'pending',
       mentorApplication: {
         expertise: data.expertise,
         experienceYears: data.experienceYears,
@@ -2380,18 +2368,53 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         phone: data.phone || targetUser.mobile,
         appliedAt: new Date().toLocaleDateString('bn-BD', { day: 'numeric', month: 'long', year: 'numeric' }),
         status: 'pending'
+      },
+      specialistApplication: {
+        expertise: data.expertise,
+        experienceYears: data.experienceYears,
+        bio: data.bio,
+        portfolioUrl: data.portfolioUrl,
+        phone: data.phone || targetUser.mobile,
+        appliedAt: new Date().toLocaleDateString('bn-BD', { day: 'numeric', month: 'long', year: 'numeric' }),
+        status: 'pending'
       }
     };
 
     if (currentUser) setPtenitUser(updatedUser);
     if (marketplaceUser) setMarketplaceUser(updatedUser);
-    setUsers(prev => prev.map(u => u.id === targetUser!.id ? updatedUser : u));
+    setUsers(prev => {
+      const exists = prev.some(u => u.id === updatedUser.id);
+      const next = exists
+        ? prev.map(u => u.id === updatedUser.id ? updatedUser : u)
+        : [updatedUser, ...prev];
+      localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(next));
+      return next;
+    });
+    if (currentUser?.id === updatedUser.id || marketplaceUser?.id === updatedUser.id) {
+      setCurrentUser(updatedUser);
+    }
+    const saved = await syncDocToFirestore('users', updatedUser.id, updatedUser);
+    if (!saved) return false;
+
+    sendCentralNotification({
+      title: '📋 নতুন টিচার ও মেন্টরশিপ আবেদন জমা হয়েছে',
+      message: `${updatedUser.name} ইনস্ট্রাক্টর ও কোর্স পরিচালনার জন্য আবেদন করেছেন। এডমিন প্যানেল থেকে পর্যালোচনা করুন।`,
+      type: 'info',
+      category: 'mentor',
+      recipientRole: 'admin',
+      mode: 'all',
+      targetTab: 'admin',
+    });
 
     sendCentralNotification({
       title: '📋 মেন্টরশিপ আবেদন সফলভাবে জমা হয়েছে',
       message: `আপনার মেন্টরশিপ আবেদন পর্যালোচনা করা হচ্ছে। এডমিন প্যানেল থেকে খুব শীঘ্রই অনুমোদন দেওয়া হবে।`,
       type: 'info',
       category: 'mentor',
+      recipientId: updatedUser.id,
+      recipientEmail: updatedUser.email,
+      recipientRole: 'buyer',
+      mode: 'buying',
       targetTab: 'mentor',
       actionLabel: 'আবেদন স্ট্যাটাস দেখুন',
       details: {
@@ -2400,87 +2423,133 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
     playAppSound('notification');
+    return true;
   };
 
-  const approveMentorApplication = (userId?: string) => {
+  const approveMentorApplication = async (userId?: string): Promise<boolean> => {
     const targetId = userId || currentUser?.id || marketplaceUser?.id;
-    if (!targetId) return;
+    if (!targetId) return false;
 
-    setUsers(prev => prev.map(u => {
-      if (u.id === targetId) {
-        return {
-          ...u,
-          role: 'instructor',
-          isMentor: true,
-          mentorStatus: 'approved',
-          mentorApplication: u.mentorApplication ? { ...u.mentorApplication, status: 'approved' } : undefined
-        };
-      }
-      return u;
-    }));
-
-    if (currentUser && currentUser.id === targetId) {
-      setPtenitUser({
-        ...currentUser,
-        role: 'instructor',
-        isMentor: true,
-        mentorStatus: 'approved',
-        mentorApplication: currentUser.mentorApplication ? { ...currentUser.mentorApplication, status: 'approved' } : undefined
-      });
+    const applicant = users.find(u => u.id === targetId) ||
+      (currentUser?.id === targetId ? currentUser : marketplaceUser?.id === targetId ? marketplaceUser : undefined);
+    if (!applicant) {
+      console.error(`[Mentorship] Cannot approve missing user ${targetId}`);
+      return false;
     }
+    const approvedUser: User = {
+      ...applicant,
+      role: 'instructor',
+      roles: Array.from(new Set([
+        ...(applicant.roles || []),
+        ...(applicant.role === 'customer' || applicant.roles?.includes('customer') ? ['customer' as const] : []),
+        'instructor',
+        'specialist'
+      ])),
+      activeRole: 'specialist',
+      isSeller: true,
+      sellerStatus: 'approved',
+      isSpecialist: true,
+      specialistStatus: 'approved',
+      isMentor: true,
+      mentorStatus: 'approved',
+      mentorApplication: applicant.mentorApplication
+        ? { ...applicant.mentorApplication, status: 'approved' }
+        : undefined,
+      specialistApplication: applicant.specialistApplication
+        ? { ...applicant.specialistApplication, status: 'approved' }
+        : undefined
+    };
+    const saved = await syncDocToFirestore('users', targetId, approvedUser);
+    if (!saved) return false;
+    setUsers(prev => {
+      const exists = prev.some(user => user.id === targetId);
+      const next = exists
+        ? prev.map(u => u.id === targetId ? approvedUser : u)
+        : [approvedUser, ...prev];
+      localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(next));
+      return next;
+    });
+    if (currentUser?.id === targetId) setPtenitUser(approvedUser);
+    if (marketplaceUser?.id === targetId) setMarketplaceUser(approvedUser);
+    if (currentUser?.id === targetId || marketplaceUser?.id === targetId) setCurrentUser(approvedUser);
 
-    if (marketplaceUser && marketplaceUser.id === targetId) {
-      setMarketplaceUser({
-        ...marketplaceUser,
-        role: 'instructor',
-        isMentor: true,
-        mentorStatus: 'approved',
-        mentorApplication: marketplaceUser.mentorApplication ? { ...marketplaceUser.mentorApplication, status: 'approved' } : undefined
-      });
-    }
-
-    sendCentralNotification({
-      title: '🎉 অভিনন্দন! আপনার মেন্টরশিপ আবেদন অনুমোদিত হয়েছে',
-      message: 'আপনি এখন PTENit ভেরিফায়েড মেন্টর। আপনার কোর্স তৈরি, অ্যাসাইনমেন্ট প্রদান ও স্টুডেন্টদের মেন্টরিং করার সকল ফিচার আনলক করা হয়েছে!',
+    const approvalNotification: NotificationItem = {
+      id: `notif-mentor-approved-${targetId}-${Date.now()}`,
+      title: '🎉 অভিনন্দন! আপনার সেলার / মেন্টর আবেদন অনুমোদিত হয়েছে',
+      message: 'আপনার সেলার / মেন্টর অ্যাক্সেস চালু হয়েছে। এখন মার্কেটপ্লেসে সেলার মোডে সুইচ করতে পারবেন।',
+      time: 'এখনই',
+      read: false,
       type: 'success',
       category: 'mentor',
-      targetTab: 'mentor',
-      actionLabel: 'মেন্টর প্যানেলে যান',
+      recipientId: approvedUser.id,
+      recipientEmail: approvedUser.email,
+      recipientRole: 'all',
+      mode: 'all',
+      targetTab: 'marketplace',
+      actionLabel: 'সেলার মোডে যান',
       details: {
-        badgeText: 'ভেরিফায়েড মেন্টর (Approved)',
-        note: 'কোর্স ও লাইভ ক্লাস ম্যানেজমেন্ট শুরু করুন।'
+        badgeText: 'অনুমোদিত (Approved)',
+        note: 'সেলার ও মেন্টর সুবিধা এখন সক্রিয়।'
       }
-    });
+    };
+    const notificationSaved = await syncDocToFirestore(
+      'notifications',
+      approvalNotification.id,
+      approvalNotification
+    );
+    if (notificationSaved) {
+      setNotifications(prev => {
+        const next = [approvalNotification, ...prev];
+        localStorage.setItem(`${STORAGE_KEY}_notifications`, JSON.stringify(next));
+        return next;
+      });
+    } else {
+      console.error(`[Mentorship] Approval saved but notification ${approvalNotification.id} failed to persist.`);
+    }
+    return true;
   };
 
   const rejectMentorApplication = (userId?: string, reason?: string) => {
     const targetId = userId || currentUser?.id || marketplaceUser?.id;
     if (!targetId) return;
 
-    setUsers(prev => prev.map(u => {
-      if (u.id === targetId) {
-        return {
-          ...u,
-          mentorStatus: 'rejected',
-          mentorApplication: u.mentorApplication ? { ...u.mentorApplication, status: 'rejected', rejectionReason: reason } : undefined
-        };
-      }
-      return u;
-    }));
-
-    if (currentUser && currentUser.id === targetId) {
-      setPtenitUser({
-        ...currentUser,
-        mentorStatus: 'rejected',
-        mentorApplication: currentUser.mentorApplication ? { ...currentUser.mentorApplication, status: 'rejected', rejectionReason: reason } : undefined
-      });
+    const applicant = users.find(u => u.id === targetId) ||
+      (currentUser?.id === targetId ? currentUser : marketplaceUser?.id === targetId ? marketplaceUser : undefined);
+    if (!applicant) {
+      console.error(`[Mentorship] Cannot reject missing user ${targetId}`);
+      return;
     }
+    const rejectedUser: User = {
+      ...applicant,
+      mentorStatus: 'rejected',
+      sellerStatus: 'rejected',
+      specialistStatus: 'rejected',
+      mentorApplication: applicant.mentorApplication
+        ? { ...applicant.mentorApplication, status: 'rejected', rejectionReason: reason }
+        : undefined,
+      specialistApplication: applicant.specialistApplication
+        ? { ...applicant.specialistApplication, status: 'rejected', rejectionReason: reason }
+        : undefined
+    };
+    setUsers(prev => {
+      const next = prev.map(u => u.id === targetId ? rejectedUser : u);
+      localStorage.setItem(`${STORAGE_KEY}_users`, JSON.stringify(next));
+      return next;
+    });
+    syncDocToFirestore('users', targetId, rejectedUser);
+    if (currentUser?.id === targetId) setPtenitUser(rejectedUser);
+    if (marketplaceUser?.id === targetId) setMarketplaceUser(rejectedUser);
+    if (currentUser?.id === targetId || marketplaceUser?.id === targetId) setCurrentUser(rejectedUser);
 
     sendCentralNotification({
       title: '⚠️ মেন্টরশিপ আবেদন সংক্রান্ত আপডেট',
       message: `আপনার মেন্টরশিপ আবেদনটি এই মুহূর্তে অনুমোদন করা সম্ভব হয়নি। কারণ: ${reason || 'প্রয়োজনীয় অভিজ্ঞতার ঘাটতি'}`,
       type: 'warning',
       category: 'mentor',
+      recipientId: rejectedUser.id,
+      recipientEmail: rejectedUser.email,
+      recipientRole: 'buyer',
+      mode: 'buying',
       targetTab: 'mentor',
       actionLabel: 'পুনরায় আবেদন করুন',
       details: {
@@ -2520,7 +2589,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           convoId.includes(m.id) ||
           (m.senderName && convoId.toLowerCase().includes(m.senderName.toLowerCase())) ||
           (m.senderName && m.senderName.toLowerCase().includes(convoId.toLowerCase()));
-        if (isMatch && (!m.read || m.unreadCount !== 0)) {
+        if (isMatch && isDirectMessageInMarketplaceMode(m, marketplaceMode) && (!m.read || m.unreadCount !== 0)) {
           changed = true;
           return { ...m, read: true, unreadCount: 0 };
         }
@@ -2528,13 +2597,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       return changed ? next : prev;
     });
-  }, []);
+  }, [marketplaceMode]);
 
   const markAllConversationsRead = useCallback((_mode?: string) => {
+    const activeMode = _mode === 'selling' || _mode === 'buying' ? _mode : marketplaceMode;
     setDirectMessages(prev => {
-      const anyUnread = prev.some(m => !m.read || m.unreadCount !== 0);
+      const visibleMessages = prev.filter(m => isDirectMessageInMarketplaceMode(m, activeMode));
+      const anyUnread = visibleMessages.some(m => !m.read || m.unreadCount !== 0);
       if (!anyUnread) return prev;
-      return prev.map(m => ({ ...m, read: true, unreadCount: 0 }));
+      return prev.map(m => isDirectMessageInMarketplaceMode(m, activeMode) ? { ...m, read: true, unreadCount: 0 } : m);
     });
     setReadConversationIds(prev => {
       const allIds = Array.from(new Set([
@@ -2550,42 +2621,98 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem(`${STORAGE_KEY}_read_convo_ids`, JSON.stringify(allIds));
       return allIds;
     });
-  }, []);
+  }, [marketplaceMode]);
 
   const markAllDirectMessagesRead = useCallback((_mode?: string) => {
+    const activeMode = _mode === 'selling' || _mode === 'buying' ? _mode : marketplaceMode;
     setDirectMessages(prev => {
-      const anyUnread = prev.some(m => !m.read);
+      const anyUnread = prev.some(m => !m.read && isDirectMessageInMarketplaceMode(m, activeMode));
       if (!anyUnread) return prev;
-      return prev.map(m => ({ ...m, read: true }));
+      return prev.map(m => isDirectMessageInMarketplaceMode(m, activeMode) ? { ...m, read: true } : m);
     });
-  }, []);
+  }, [marketplaceMode]);
 
-  const sendDirectMessage = (msg: Omit<DirectMessageItem, 'id' | 'read'>) => {
-    const newMsg: DirectMessageItem = {
-      ...msg,
-      id: `dmsg-${Date.now()}`,
-      read: false
-    };
-    setDirectMessages(prev => [newMsg, ...prev]);
-    playAppSound('message');
+  const deleteDirectMessage = (id: string) => {
+    setDirectMessages(prev => {
+      const remaining = prev.filter(message => message.id !== id);
+      localStorage.setItem(`${STORAGE_KEY}_direct_messages`, JSON.stringify(remaining));
+      return remaining;
+    });
+    void deleteDocFromFirestore('directMessages', id).then(deleted => {
+      if (!deleted) console.error(`[Direct messages] Failed to permanently delete ${id}`);
+    });
   };
 
-  const openChatWindow = (contact: { id?: string; orderId?: string; isClosed?: boolean; isReadOnly?: boolean; targetUserId?: string; senderName: string; senderRole?: string; senderAvatar?: string; initialMessage?: string }) => {
-    const windowId = contact.id || `chat-${contact.senderName.replace(/\s+/g, '-').toLowerCase()}`;
+  const sendDirectMessage = async (msg: Omit<DirectMessageItem, 'id' | 'read'>): Promise<boolean> => {
+    const recipient = users.find(user =>
+      (msg.recipientId && user.id === msg.recipientId) ||
+      (msg.recipientEmail && user.email?.toLowerCase() === msg.recipientEmail.toLowerCase())
+    );
+    if (!currentUser || !recipient || recipient.id === currentUser.id) {
+      console.error('[Direct messages] A valid, different recipient is required.');
+      return false;
+    }
+    const newMsg: DirectMessageItem = {
+      ...msg,
+      senderId: currentUser.id,
+      senderEmail: currentUser.email,
+      recipientId: recipient.id,
+      recipientEmail: recipient.email,
+      conversationId: msg.conversationId || getDirectConversationId(currentUser.id, recipient.id, msg.orderId),
+      mode: msg.mode || marketplaceMode,
+      id: `dmsg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      read: false
+    };
+    setDirectMessages(prev => {
+      const next = [newMsg, ...prev];
+      localStorage.setItem(`${STORAGE_KEY}_direct_messages`, JSON.stringify(next));
+      return next;
+    });
+    const persisted = await syncDocToFirestore('directMessages', newMsg.id, newMsg);
+    if (!persisted) {
+      console.error(`[Direct messages] Message ${newMsg.id} could not be delivered to Firestore.`);
+      return false;
+    }
+    playAppSound('message');
+    return true;
+  };
+
+  const openChatWindow = (contact: { id?: string; orderId?: string; isClosed?: boolean; isReadOnly?: boolean; targetUserId?: string; targetUserEmail?: string; senderName: string; senderRole?: string; senderAvatar?: string; initialMessage?: string }) => {
+    const order = contact.orderId ? marketplaceOrders.find(item => item.id === contact.orderId) : undefined;
+    const otherOrderUserId = order && currentUser
+      ? (order.buyerId === currentUser.id ? order.sellerId : order.sellerId === currentUser.id ? order.buyerId : undefined)
+      : undefined;
+    const otherOrderEmail = order && currentUser
+      ? (order.buyerId === currentUser.id ? order.sellerEmail : order.sellerId === currentUser.id ? order.buyerEmail : undefined)
+      : undefined;
+    const recipient = users.find(user =>
+      (contact.targetUserId && user.id === contact.targetUserId) ||
+      (contact.targetUserEmail && user.email?.toLowerCase() === contact.targetUserEmail.toLowerCase()) ||
+      (otherOrderUserId && user.id === otherOrderUserId) ||
+      (otherOrderEmail && user.email?.toLowerCase() === otherOrderEmail.toLowerCase())
+    );
+    const conversationId = currentUser && recipient
+      ? getDirectConversationId(currentUser.id, recipient.id, contact.orderId)
+      : contact.id || `chat-${contact.senderName.replace(/\s+/g, '-').toLowerCase()}`;
+    const baseWindowId = conversationId;
+    const windowId = baseWindowId;
     setActiveMessengerConversationId(windowId);
     
     setActiveChatWindows(prev => {
-      const existing = prev.find(w => w.id === windowId || w.senderName === contact.senderName);
+      const existing = prev.find(w => w.id === windowId || (w.orderId && w.orderId === contact.orderId && w.targetUserId === recipient?.id));
       if (existing) {
         return [...prev.filter(w => w.id !== existing.id), { ...existing, minimized: false, orderId: contact.orderId || existing.orderId }];
       }
       
       const newWin: ActiveChatWindow = {
         id: windowId,
+        mode: marketplaceMode,
         orderId: contact.orderId,
         senderName: contact.senderName,
         senderRole: contact.senderRole || 'customer',
         senderAvatar: contact.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80',
+        targetUserId: recipient?.id,
+        targetUserEmail: recipient?.email,
         minimized: false,
         messages: contact.initialMessage ? [
           {
@@ -2596,16 +2723,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             text: contact.initialMessage,
             time: 'এখন'
           }
-        ] : [
-          {
-            id: `msg-${Date.now()}-1`,
-            senderName: contact.senderName,
-            senderAvatar: contact.senderAvatar,
-            isSelf: false,
-            text: `হ্যালো! আমি ${contact.senderName}। কাজ বা প্রজেক্ট সম্পর্কিত যেকোনো তথ্যের জন্য ইনবক্সে মেসেজ করুন।`,
-            time: '১০ মিনিট আগে'
-          }
-        ]
+        ] : directMessages
+          .filter(message => message.conversationId === conversationId || (
+            recipient && currentUser && (
+              (message.senderId === currentUser.id && message.recipientId === recipient.id) ||
+              (message.senderId === recipient.id && message.recipientId === currentUser.id)
+            )
+          ))
+          .sort((a, b) => (a.time || '').localeCompare(b.time || ''))
+          .map(message => ({
+            id: message.id,
+            senderName: message.senderName,
+            senderAvatar: message.senderAvatar,
+            isSelf: message.senderId === currentUser?.id,
+            text: message.text,
+            time: message.time || 'এখন'
+          }))
       };
       return [...prev, newWin];
     });
@@ -2663,27 +2796,31 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRightColumnView('default');
   };
 
-  const [marketplaceMode, setMarketplaceModeState] = useState<'buying' | 'selling'>(() => {
-    try {
-      const saved = localStorage.getItem('marketplace_mode');
-      if (saved === 'selling' || saved === 'buying') return saved;
-    } catch {}
-    return 'buying';
-  });
-
-  const setMarketplaceMode = useCallback((mode: 'buying' | 'selling') => {
-    setMarketplaceModeState(prev => (prev === mode ? prev : mode));
-    try {
-      localStorage.setItem('marketplace_mode', mode);
-    } catch {}
-  }, []);
-
   const clearAllNotifications = () => {
-    setNotifications([]);
+    const visibleIds = new Set<string>(notifications
+      .filter(n => isNotificationVisibleToUser(n, currentUser, marketplaceMode))
+      .map(n => n.id));
+    const remaining = notifications.filter(n => !visibleIds.has(n.id));
+    setNotifications(remaining);
+    localStorage.setItem(`${STORAGE_KEY}_notifications`, JSON.stringify(remaining));
+    visibleIds.forEach(id => {
+      void deleteDocFromFirestore('notifications', id).then(deleted => {
+        if (!deleted) console.error(`[Notifications] Failed to permanently delete ${id}`);
+      });
+    });
   };
 
   const deleteNotification = (id: string) => {
-    setNotifications(prev => prev.filter(n => n.id !== id));
+    const notification = notifications.find(n => n.id === id);
+    if (!notification || !isNotificationVisibleToUser(notification, currentUser, marketplaceMode)) return;
+    setNotifications(prev => {
+      const remaining = prev.filter(n => n.id !== id);
+      localStorage.setItem(`${STORAGE_KEY}_notifications`, JSON.stringify(remaining));
+      return remaining;
+    });
+    void deleteDocFromFirestore('notifications', id).then(deleted => {
+      if (!deleted) console.error(`[Notifications] Failed to permanently delete ${id}`);
+    });
   };
 
   const toggleMinimizeChatWindow = (id: string) => {
@@ -2707,6 +2844,37 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const targetWin = currentWindows.find(w => w.id === windowId);
     const targetOrderId = targetWin?.orderId;
     const targetSenderName = targetWin?.senderName;
+    const recipient = users.find(user =>
+      (targetWin?.targetUserId && user.id === targetWin.targetUserId) ||
+      (targetWin?.targetUserEmail && user.email?.toLowerCase() === targetWin.targetUserEmail.toLowerCase())
+    );
+    if (!currentUser || !recipient) {
+      console.error('[Direct messages] Cannot send: the conversation has no valid recipient.');
+      return;
+    }
+    const directMessage: DirectMessageItem = {
+      id: `dmsg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      conversationId: getDirectConversationId(currentUser.id, recipient.id, targetOrderId),
+      senderId: currentUser.id,
+      recipientId: recipient.id,
+      senderEmail: currentUser.email,
+      recipientEmail: recipient.email,
+      senderName: currentUser.name,
+      senderRole: currentUser.role,
+      senderAvatar: currentUser.avatar,
+      recipientRole: recipient.role === 'instructor' ? 'seller' : 'buyer',
+      mode: marketplaceMode,
+      text,
+      time: new Date().toISOString(),
+      read: false,
+      orderId: targetOrderId
+    };
+    setDirectMessages(prev => {
+      const next = [directMessage, ...prev];
+      localStorage.setItem(`${STORAGE_KEY}_direct_messages`, JSON.stringify(next));
+      return next;
+    });
+    void syncDocToFirestore('directMessages', directMessage.id, directMessage);
 
     // Decrement unread message count for this order upon sending a reply
     setMarketplaceOrders(prev => prev.map(o => {
@@ -2732,58 +2900,6 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return w;
     }));
     playAppSound('message');
-
-    // Auto response for ongoing active messaging thread (only if not a direct offer or meet call)
-    if (!meetLink && !directOffer) {
-      setTimeout(() => {
-        setActiveChatWindows(prev => prev.map(w => {
-          if (w.id === windowId) {
-            const autoReplies = [
-              "ধন্যবাদ ভাইয়া! আপনার মেসেজটি পেয়েছি, কাজ দ্রুত এগিয়ে নিচ্ছি।",
-              "জি অবশ্যই! আমি বিষয়টি ড্যাশবোর্ডে ফাইলসহ আপডেট করে দেবো।",
-              "কোনো সংশোধনী থাকলে বলুন, আমরা এখনই গুগল মিটে লাইভ ডিসকাশন করতে পারি!"
-            ];
-            const randomReply = autoReplies[Math.floor(Math.random() * autoReplies.length)];
-            const autoReply: ChatMessage = {
-              id: `msg-reply-${Date.now()}`,
-              senderName: w.senderName,
-              senderAvatar: w.senderAvatar,
-              isSelf: false,
-              text: randomReply,
-              time: 'এখন'
-            };
-            return {
-              ...w,
-              messages: [...w.messages, autoReply]
-            };
-          }
-          return w;
-        }));
-        playAppSound('message');
-      }, 1200);
-    } else {
-      // Immediate acknowledgment from receiver when Google Meet link is shared
-      setTimeout(() => {
-        setActiveChatWindows(prev => prev.map(w => {
-          if (w.id === windowId) {
-            const autoReply: ChatMessage = {
-              id: `msg-reply-${Date.now()}`,
-              senderName: w.senderName,
-              senderAvatar: w.senderAvatar,
-              isSelf: false,
-              text: "ধন্যবাদ! আমি গুগল মিট (Google Meet) আমন্ত্রণটি পেয়েছি, এখনই লিংকে ক্লিক করে মিটিংয়ে যুক্ত হচ্ছি।",
-              time: 'এখন'
-            };
-            return {
-              ...w,
-              messages: [...w.messages, autoReply]
-            };
-          }
-          return w;
-        }));
-        playAppSound('message');
-      }, 1200);
-    }
   };
 
   // In-App Video/Audio/Screen Meet Studio State (Our site's native conference engine)
@@ -3227,6 +3343,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       sellerPayout: Math.round(orderAmount * 0.9),
       paymentMethod: 'PTEN IT Official Escrow',
       transactionId: `TRX-PTENIT-${Math.floor(100000 + Math.random() * 900000)}`,
+      offerType: projData.offerType,
+      isWorkFirst: projData.isWorkFirst === true || projData.offerType === 'work_first',
       status: 'pending_approval',
       isPublicOffer: !isDirect,
       isDirectOffer: isDirect,
@@ -3298,7 +3416,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         time: 'এখনই',
         read: false,
         type: 'info',
-        recipientRole: 'all',
+        recipientRole: 'seller',
+        isBroadcast: true,
+        mode: 'selling',
         targetTab: 'agency_projects',
         targetId: newProj.id
       };
@@ -3469,6 +3589,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         amount: newJob.budget,
         adminCommission: Math.round(newJob.budget * 0.1),
         sellerPayout: Math.round(newJob.budget * 0.9),
+        offerType: created.offerType,
+        isWorkFirst: created.isWorkFirst === true || created.offerType === 'work_first',
         status: 'in_progress',
         createdAt: new Date().toISOString().split('T')[0],
         deadlineDate: new Date(Date.now() + (newJob.deadlineDays || 7) * 86400000).toISOString().split('T')[0]
@@ -3568,7 +3690,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       amount: prop.bidAmount,
       adminCommission: Math.round(prop.bidAmount * 0.1),
       sellerPayout: Math.round(prop.bidAmount * 0.9),
-      paymentMethod: 'Escrow (bKash/Nagad)',
+      paymentMethod: job.isWorkFirst || job.offerType === 'work_first' ? 'Pay After Delivery' : 'Escrow (bKash/Nagad)',
+      offerType: job.offerType,
+      isWorkFirst: job.isWorkFirst === true || job.offerType === 'work_first',
       transactionId: `TRX-MKT-${Math.floor(100000 + Math.random() * 900000)}`,
       status: 'in_progress',
       createdAt: new Date().toISOString(),
@@ -3588,6 +3712,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!gig) return null;
 
     const pkg = gig.packages[packageType] || gig.packages.standard || gig.packages.basic;
+    const isWorkFirst =
+      gig.offerBadge === 'work_first' ||
+      gig.offerBadge === 'আগে কাজ শুরু' ||
+      Boolean(gig.offerBadge?.includes('আগে কাজ শুরু')) ||
+      Boolean(buyerDetails?.paymentMethod?.toLowerCase().includes('after delivery'));
     const buyerName = buyerDetails?.name || currentUser?.name || 'সম্মানিত ক্লায়েন্ট';
     const buyerEmail = buyerDetails?.email || currentUser?.email || 'client@ptenit.com';
     const buyerPhone = buyerDetails?.phone || currentUser?.mobile || currentUser?.phone || '01700000000';
@@ -3612,6 +3741,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       adminCommission: Math.round(pkg.price * 0.1),
       sellerPayout: Math.round(pkg.price * 0.9),
       paymentMethod: buyerDetails?.paymentMethod || 'Escrow (bKash/Nagad)',
+      offerType: isWorkFirst ? 'work_first' : 'paid',
+      isWorkFirst,
       transactionId: buyerDetails?.transactionId || `TRX-GIG-${Math.floor(100000 + Math.random() * 900000)}`,
       status: 'pending',
       deliveryNote: customNote,
@@ -3637,25 +3768,26 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return next;
     });
 
-    // Auto-feed into Company Bills ledger for Admin financial tracking
-    const mktBillItem: CompanyBillItem = {
-      id: `BILL-MKT-${order.id.replace(/[^0-9]/g, '') || Date.now().toString().slice(-6)}`,
-      payerName: buyerName,
-      payerPhone: buyerPhone,
-      gateway: (buyerDetails?.paymentMethod?.includes('Nagad') ? 'Nagad' : buyerDetails?.paymentMethod?.includes('Rocket') ? 'Rocket' : 'bKash') as any,
-      transactionId: order.transactionId || '',
-      amount: pkg.price,
-      category: `গিগ অর্ডার ডিপোজিট: ${gig.title}`,
-      status: 'pending',
-      date: new Date().toLocaleString('bn-BD', { hour12: true }),
-      note: `মার্কেটপ্লেস অর্ডার #${order.id} (সেলার: ${gig.sellerName})`
-    };
-    setCompanyBills(prev => {
-      const next = [mktBillItem, ...prev.filter(b => b.id !== mktBillItem.id)];
-      localStorage.setItem('ptenit_company_bills', JSON.stringify(next));
-      return next;
-    });
-    syncDocToFirestore('companyBills', mktBillItem.id, mktBillItem);
+    if (!isWorkFirst) {
+      const mktBillItem: CompanyBillItem = {
+        id: `BILL-MKT-${order.id.replace(/[^0-9]/g, '') || Date.now().toString().slice(-6)}`,
+        payerName: buyerName,
+        payerPhone: buyerPhone,
+        gateway: (buyerDetails?.paymentMethod?.includes('Nagad') ? 'Nagad' : buyerDetails?.paymentMethod?.includes('Rocket') ? 'Rocket' : 'bKash') as any,
+        transactionId: order.transactionId || '',
+        amount: pkg.price,
+        category: `গিগ অর্ডার ডিপোজিট: ${gig.title}`,
+        status: 'pending',
+        date: new Date().toLocaleString('bn-BD', { hour12: true }),
+        note: `মার্কেটপ্লেস অর্ডার #${order.id} (সেলার: ${gig.sellerName})`
+      };
+      setCompanyBills(prev => {
+        const next = [mktBillItem, ...prev.filter(b => b.id !== mktBillItem.id)];
+        localStorage.setItem('ptenit_company_bills', JSON.stringify(next));
+        return next;
+      });
+      syncDocToFirestore('companyBills', mktBillItem.id, mktBillItem);
+    }
 
     // Send notifications & direct messages targeted to Marketplace & Admin
     const sellerNotif: NotificationItem = {
@@ -3665,6 +3797,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       time: 'এখনই',
       read: false,
       type: 'success',
+      category: 'seller',
+      recipientId: gig.sellerId,
+      recipientRole: 'seller',
+      mode: 'selling',
       targetTab: 'marketplace',
       targetId: order.id
     };
@@ -3676,6 +3812,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       time: 'এখনই',
       read: false,
       type: 'info',
+      category: 'buyer',
+      recipientId: currentUser?.id,
+      recipientRole: 'buyer',
+      mode: 'buying',
       targetTab: 'marketplace',
       targetId: order.id
     };
@@ -3687,6 +3827,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       time: 'এখনই',
       read: false,
       type: 'success',
+      recipientRole: 'admin',
       targetTab: 'orders',
       targetId: order.id
     };
@@ -3703,10 +3844,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setDirectMessages(prev => [
       {
         id: `dmsg-${Date.now()}`,
+        senderId: currentUser?.id,
+        senderEmail: currentUser?.email,
+        recipientId: gig.sellerId,
+        recipientEmail: users.find(user => user.id === gig.sellerId)?.email,
         senderName: `${buyerName} (বায়ার)`,
         senderRole: 'customer',
         senderAvatar: currentUser?.avatar,
         recipientRole: 'instructor',
+        mode: 'selling',
+        category: 'seller',
         text: `সালাম! আমি "${gig.title}" এর ${pkg.name || packageType} প্যাকেজটি (৳${pkg.price}) প্লেস করেছি। (অর্ডার আইডি: #${order.id})।`,
         time: 'এখনই',
         read: false,
@@ -3796,6 +3943,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ...(paymentInfo?.method ? { paymentMethod: paymentInfo.method } : {}),
           ...(paymentInfo?.transactionId ? { transactionId: paymentInfo.transactionId } : {}),
           ...(paymentInfo?.senderPhone ? { buyerPhone: paymentInfo.senderPhone } : {}),
+          ...(paymentInfo?.transactionId ? { paymentStatus: 'verified' } : {}),
           isWorkFirstPaid: true,
           paidAt: new Date().toISOString()
         };
@@ -4032,6 +4180,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const acceptDirectOffer = (orderIdOrProjectId: string) => {
+    const acceptedProject = customerProjects.find(p =>
+      p.id === orderIdOrProjectId ||
+      (orderIdOrProjectId.startsWith('ord-') && orderIdOrProjectId.includes(p.id.replace('proj-', '')))
+    );
     // 1. Update marketplaceOrders
     setMarketplaceOrders(prev => {
       const next = prev.map(o => {
@@ -4093,6 +4245,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       time: 'এখনই',
       read: false,
       type: 'success',
+      recipientId: acceptedProject?.customerId,
+      recipientEmail: acceptedProject?.customerEmail,
       recipientRole: 'buyer',
       mode: 'buying',
       targetTab: 'my-orders'
@@ -4221,6 +4375,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       read: false,
       type: 'info',
       recipientRole: 'seller',
+      isBroadcast: true,
       mode: 'selling',
       targetTab: 'seller_feed'
     };
@@ -4378,14 +4533,166 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     syncDocToFirestore('companyBills', bill.id, bill);
   };
 
+  const submitWorkFirstBill = async (
+    orderId: string,
+    payment: {
+      payerName: string;
+      payerPhone: string;
+      gateway: CompanyBillItem['gateway'];
+      transactionId: string;
+      rating: number;
+      reviewComment: string;
+      totalAmount?: number;
+      penaltyApplied?: boolean;
+      penaltyAmount?: number;
+    }
+  ): Promise<boolean> => {
+    let order = marketplaceOrders.find(item => item.id === orderId);
+    if (!order) {
+      const proj = (customerProjects || []).find(item => item.id === orderId);
+      if (proj) {
+        order = {
+          id: proj.id,
+          title: proj.title,
+          amount: proj.budget || 5000,
+          sellerId: proj.assignedTo || 'seller-jamal-1',
+          sellerName: proj.assignedToName || 'Jamal',
+          buyerId: proj.customerId || 'buyer-1',
+          buyerName: proj.customerName || payment.payerName,
+          status: 'in_review',
+          isWorkFirst: true,
+          offerType: 'work_first',
+          isWorkFirstPaid: false,
+          paymentStatus: 'unpaid',
+          createdAt: proj.createdAt || new Date().toISOString()
+        } as MarketplaceOrder;
+      } else {
+        // Fallback for live demo or custom work-first order
+        order = {
+          id: orderId,
+          title: 'মার্কেটপ্লেস মোবাইল অ্যাপ UI/UX ডিজাইন',
+          amount: 5000,
+          sellerId: 'seller-jamal-1',
+          sellerName: 'Jamal',
+          buyerId: 'buyer-1',
+          buyerName: payment.payerName,
+          status: 'in_review',
+          isWorkFirst: true,
+          offerType: 'work_first',
+          isWorkFirstPaid: false,
+          paymentStatus: 'unpaid',
+          createdAt: new Date().toISOString()
+        } as MarketplaceOrder;
+      }
+    }
+
+    const billPayableAmount = payment.totalAmount || order.amount || 5000;
+    const billId = `BILL-DUE-${orderId}-${Date.now()}`;
+    const billNote = payment.penaltyApplied
+      ? `অর্ডার #${orderId}; সেলার: ${order.sellerName || 'Jamal'} (২৪ ঘণ্টা অতিক্রান্ত: ৫% বিলম্ব জরিমানা ৳${payment.penaltyAmount || 0} সহ)`
+      : `অর্ডার #${orderId}; সেলার: ${order.sellerName || 'Jamal'}`;
+
+    const bill: CompanyBillItem = {
+      id: billId,
+      orderId,
+      payerName: payment.payerName,
+      payerPhone: payment.payerPhone,
+      gateway: payment.gateway,
+      transactionId: payment.transactionId,
+      amount: billPayableAmount,
+      category: `মার্কেটপ্লেস বকেয়া বিল: ${order.title}`,
+      status: 'pending',
+      date: new Date().toLocaleString('bn-BD', { hour12: true }),
+      note: billNote
+    };
+    const updatedOrder: MarketplaceOrder = {
+      ...order,
+      amount: billPayableAmount,
+      paymentMethod: `${payment.gateway} (বকেয়া বিল যাচাই অপেক্ষমাণ)`,
+      transactionId: payment.transactionId,
+      buyerPhone: payment.payerPhone,
+      paymentStatus: 'pending',
+      isWorkFirstPaid: true,
+      rating: payment.rating,
+      reviewComment: payment.reviewComment
+    };
+
+    // 1. Immediately persist to state & localStorage
+    setCompanyBills(prev => {
+      const next = [bill, ...prev.filter(existing => existing.id !== billId && existing.transactionId !== payment.transactionId)];
+      try {
+        localStorage.setItem('ptenit_company_bills', JSON.stringify(next));
+      } catch (e) {
+        console.warn('[CompanyBills] localStorage save error:', e);
+      }
+      return next;
+    });
+
+    setMarketplaceOrders(prev => {
+      const exists = prev.some(item => item.id === orderId);
+      const next = exists ? prev.map(item => item.id === orderId ? updatedOrder : item) : [updatedOrder, ...prev];
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_marketplace_orders`, JSON.stringify(next));
+      } catch (e) {
+        console.warn('[MarketplaceOrders] localStorage save error:', e);
+      }
+      return next;
+    });
+
+    // 2. Notifications for Admin & Seller
+    const adminNotif: NotificationItem = {
+      id: `notif-${Date.now()}-admin-due`,
+      title: `💳 বকেয়া বিল পরিশোধ সাবমিট #${orderId.slice(-6).toUpperCase()}`,
+      message: `${payment.payerName} (${payment.payerPhone}) অর্ডার "${order.title}"-এর জন্য ৳${order.amount} (${payment.gateway}, TrxID: ${payment.transactionId}) পরিশোধ করেছেন। যাচাই করে অনুমোদন দিন।`,
+      time: 'এখনই',
+      read: false,
+      type: 'info',
+      targetTab: 'billing',
+      targetId: billId
+    };
+    const sellerNotif: NotificationItem = {
+      id: `notif-${Date.now()}-seller-due`,
+      title: `🎉 বায়ার বকেয়া বিল পরিশোধ করেছেন`,
+      message: `আপনার "${order.title}" অর্ডারে বায়ার ৳${order.amount} পরিশোধের তথ্য সাবমিট করেছেন (TrxID: ${payment.transactionId})। অ্যাডমিন যাচাইয়ের পর ব্যালেন্সে যুক্ত হবে।`,
+      time: 'এখনই',
+      read: false,
+      type: 'success',
+      targetTab: 'orders',
+      targetId: orderId
+    };
+    setNotifications(prev => {
+      const next = [adminNotif, sellerNotif, ...prev];
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_notifications`, JSON.stringify(next));
+      } catch (e) {
+        console.warn('[Notifications] localStorage save error:', e);
+      }
+      return next;
+    });
+
+    // 3. Safe Firestore background sync
+    try {
+      void syncDocToFirestore('companyBills', billId, bill);
+      void syncDocToFirestore('marketplaceOrders', orderId, updatedOrder);
+      void syncDocToFirestore('notifications', adminNotif.id, adminNotif);
+      void syncDocToFirestore('notifications', sellerNotif.id, sellerNotif);
+    } catch (e) {
+      console.warn('[Firestore] Background sync error:', e);
+    }
+
+    return true;
+  };
+
   const verifyCompanyBill = (billId: string, verifiedBy?: string) => {
+    const billForOrder = companyBills.find(bill => bill.id === billId);
     setCompanyBills(prev => {
       const next = prev.map(b => {
         if (b.id === billId) {
           const item: CompanyBillItem = {
             ...b,
             status: 'verified' as const,
-            verifiedAt: new Date().toLocaleString('bn-BD', { hour12: true })
+            verifiedAt: new Date().toLocaleString('bn-BD', { hour12: true }),
+            note: verifiedBy ? `${b.note || ''} [যাচাই করেছেন: ${verifiedBy}]`.trim() : b.note
           };
           syncDocToFirestore('companyBills', billId, item);
           return item;
@@ -4395,9 +4702,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('ptenit_company_bills', JSON.stringify(next));
       return next;
     });
+    if (billForOrder?.orderId && billForOrder.status === 'pending') {
+      const order = marketplaceOrders.find(item => item.id === billForOrder.orderId);
+      if (order && (order.isWorkFirst || order.offerType === 'work_first')) {
+        approveOrderAndReleaseEscrow(order.id, order.rating || 5, order.reviewComment, {
+          method: `${billForOrder.gateway} (বকেয়া বিল যাচাইকৃত)`,
+          transactionId: billForOrder.transactionId,
+          senderPhone: billForOrder.payerPhone
+        });
+      }
+    }
   };
 
   const rejectCompanyBill = (billId: string, reason?: string) => {
+    const billForOrder = companyBills.find(bill => bill.id === billId);
     setCompanyBills(prev => {
       const next = prev.map(b => {
         if (b.id === billId) {
@@ -4414,6 +4732,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('ptenit_company_bills', JSON.stringify(next));
       return next;
     });
+    if (billForOrder?.orderId) {
+      updateMarketplaceOrder(billForOrder.orderId, {
+        paymentStatus: 'rejected',
+        paymentMethod: `${billForOrder.gateway} (বকেয়া বিল প্রত্যাখ্যাত)`
+      });
+    }
   };
 
   const deleteCompanyBill = (billId: string) => {
@@ -4584,6 +4908,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         markAllConversationsRead,
         markDirectMessageRead,
         markAllDirectMessagesRead,
+        deleteDirectMessage,
         sendDirectMessage,
         openChatWindow,
         closeChatWindow,
@@ -4604,6 +4929,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toggleOfferSound,
         companyBills,
         addCompanyBill,
+        submitWorkFirstBill,
         verifyCompanyBill,
         rejectCompanyBill,
         deleteCompanyBill,

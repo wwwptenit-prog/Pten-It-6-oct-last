@@ -340,7 +340,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
       return [
         { id: 'dashboard', label: 'ড্যাশবোর্ড', closable: false },
         { id: 'support', label: 'কাস্টমার কেয়ার', closable: true },
-        { id: 'users_teacher_seller', label: 'ইউজার ও কমপ্লেইন হাব', closable: true },
+        { id: 'users', label: 'ইউজার ডিরেক্টরি', closable: true },
         { id: 'ai_core', label: 'ফাইন্যান্সিয়াল ও বিলিং কোর', closable: true },
         { id: 'sub_admins', label: 'সাব-এডমিন রোল (RBAC)', closable: true }
       ];
@@ -351,7 +351,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
       { id: 'support', label: 'কাস্টমার কেয়ার', closable: true }
     ];
     if (perms.canManageUsers || perms.canApproveTeachers) {
-      tabs.push({ id: 'users_teacher_seller', label: 'ইউজার ডিরেক্টরি', closable: true });
+      tabs.push({ id: 'users', label: 'ইউজার ডিরেক্টরি', closable: true });
     }
     if (perms.canVerifyPayments || perms.canAccessLedger) {
       tabs.push({ id: 'ai_core', label: 'ফাইন্যান্সিয়াল কোর', closable: true });
@@ -375,7 +375,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
     else if (tabId === 'support') setActiveMainModule('support');
     else if (tabId === 'ai_core') setActiveMainModule('ai_core');
     else if (tabId === 'sub_admins') setActiveMainModule('staff');
-    else if (tabId.startsWith('users')) setActiveMainModule('users');
+    else if (tabId === 'users' || tabId.startsWith('users_')) setActiveMainModule('users');
     else if (['courses', 'teachers'].includes(tabId)) setActiveMainModule('academy');
     else if (['gigs_manage', 'digital_products', 'agency_clients', 'financials'].includes(tabId)) setActiveMainModule('marketplace');
     else if (['settings', 'payment_methods', 'fee_commission'].includes(tabId)) setActiveMainModule('settings');
@@ -1660,14 +1660,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
               <span className="hidden 2xl:inline text-xs">{isSidebarCollapsed ? 'মেনু প্রসারিত' : 'মিনিমাইজ'}</span>
             </button>
 
-            {/* Language Switcher */}
+            {/* Visit Main Site Button */}
             <button
-              onClick={() => setLang(lang === 'bn' ? 'en' : 'bn')}
-              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl border border-slate-700 text-slate-200 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
-              title="ভাষা পরিবর্তন"
+              onClick={() => {
+                if (setActiveTab) {
+                  setActiveTab('home');
+                } else {
+                  window.location.href = '/';
+                }
+              }}
+              className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-xl border border-slate-700 text-slate-200 hover:text-emerald-400 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-xs"
+              title="মেইন ওয়েবসাইট ভিজিট করুন"
             >
-              <Globe className="w-3.5 h-3.5 text-sky-400" />
-              <span>{lang === 'bn' ? 'ENG' : 'বাং'}</span>
+              <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+              <span>মেইন সাইট</span>
             </button>
 
             {/* Night Mode Toggle */}
@@ -1800,10 +1806,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
             {/* Quick Actions Row */}
             <div className="flex items-center gap-1.5 shrink-0">
               <button
-                onClick={() => setLang(lang === 'bn' ? 'en' : 'bn')}
-                className="px-2 py-1 bg-slate-800 rounded-lg text-xs font-bold text-slate-300 border border-slate-700 cursor-pointer"
+                onClick={() => {
+                  if (setActiveTab) {
+                    setActiveTab('home');
+                  } else {
+                    window.location.href = '/';
+                  }
+                }}
+                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 rounded-lg text-xs font-bold text-slate-200 hover:text-emerald-400 border border-slate-700 cursor-pointer flex items-center gap-1"
+                title="মেইন ওয়েবসাইট ভিজিট করুন"
               >
-                {lang === 'bn' ? 'ENG' : 'বাং'}
+                <ExternalLink className="w-3 h-3 text-emerald-400" />
+                <span>মেইন সাইট</span>
               </button>
               
               <button
@@ -1842,7 +1856,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
               return [
                 { id: 'dashboard', label: '📊 ড্যাশবোর্ড', tab: 'dashboard', show: true },
                 { id: 'support', label: '🎧 কাস্টমার কেয়ার', tab: 'support', show: true },
-                { id: 'users', label: '👥 ইউজার', tab: 'users_teacher_seller', badge: users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending').length, show: !userPerms || userPerms.canManageUsers || userPerms.canApproveTeachers },
+                { id: 'users', label: '👥 ইউজার', tab: 'users', badge: users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending' || u.sellerStatus === 'pending' || u.specialistApplication?.status === 'pending').length, show: !userPerms || userPerms.canManageUsers || userPerms.canApproveTeachers },
                 { id: 'ai_core', label: '💳 ফাইন্যান্সিয়াল', tab: 'ai_core', badge: (companyBills.filter(b => b.status === 'pending').length + payouts.filter(p => p.status === 'Pending').length) || undefined, show: !userPerms || userPerms.canVerifyPayments || userPerms.canAccessLedger },
                 { id: 'staff', label: '🛡️ সাব-এডমিন', tab: 'sub_admins', show: !userPerms || userPerms.canModifySettings },
                 { id: 'academy', label: '🎓 একাডেমি', tab: 'courses', badge: payouts.filter(p => p.status === 'Pending').length, show: !userPerms || userPerms.canManageCourses || userPerms.canApproveTeachers },
@@ -1921,7 +1935,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
                     { id: 'responsive_setup', label: 'লেআউট' }
                   ];
                 } else if (activeMainModule === 'users') {
-                  const pendingCount = users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending').length;
+                  const pendingCount = users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending' || u.sellerStatus === 'pending' || u.specialistApplication?.status === 'pending').length;
                   currentSubTabs = [
                     { id: 'users', label: 'সকল ইউজার', badge: users.length },
                     { id: 'users_teacher_seller', label: 'টিচার ও সেলার' },
@@ -1992,7 +2006,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
                     return [
                       { id: 'dashboard', label: 'ড্যাশবোর্ড', sub: 'ওভারভিউ & স্ট্যাটস', icon: LayoutDashboard, tab: 'dashboard', show: true },
                       { id: 'support', label: 'কাস্টমার কেয়ার', sub: 'স্মার্ট অটো-রাউটিং টিকেট', icon: Headphones, tab: 'support', show: true },
-                      { id: 'users', label: 'ইউজার কন্ট্রোল', sub: 'টিচার, সেলার, শিক্ষার্থী & বায়ার', icon: Users, tab: 'users_teacher_seller', badge: users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending').length, show: !userPerms || userPerms.canManageUsers || userPerms.canApproveTeachers },
+                      { id: 'users', label: 'ইউজার কন্ট্রোল', sub: 'সকল ইউজার, আবেদন ও পারমিশন', icon: Users, tab: 'users', badge: users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending' || u.sellerStatus === 'pending' || u.specialistApplication?.status === 'pending').length, show: !userPerms || userPerms.canManageUsers || userPerms.canApproveTeachers },
                       { id: 'ai_core', label: 'ফাইন্যান্সিয়াল কোর', sub: 'সকল পেমেন্ট ও ভাউচার', icon: CreditCard, tab: 'ai_core', badge: (companyBills.filter(b => b.status === 'pending').length + payouts.filter(p => p.status === 'Pending').length) || undefined, show: !userPerms || userPerms.canVerifyPayments || userPerms.canAccessLedger },
                       { id: 'staff', label: 'সাব-এডমিন রোল', sub: 'টিম পারমিশন & রোল', icon: ShieldCheck, tab: 'sub_admins', show: !userPerms || userPerms.canModifySettings },
                       { id: 'academy', label: 'একাডেমি', sub: 'কোর্স, স্টুডেন্ট & টিচার', icon: BookOpen, tab: 'courses', badge: payouts.filter(p => p.status === 'Pending').length, show: !userPerms || userPerms.canManageCourses || userPerms.canApproveTeachers },
@@ -2150,7 +2164,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
                       label: 'ইউজার কন্ট্রোল',
                       subText: 'ইউজার তালিকা',
                       icon: Users,
-                      badge: users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending').length || undefined,
+                      badge: users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending' || u.sellerStatus === 'pending' || u.specialistApplication?.status === 'pending').length || undefined,
                       isActive: activeMainModule === 'users',
                       show: !userPerms || userPerms.canManageUsers || userPerms.canApproveTeachers,
                       onClick: () => {
@@ -2394,7 +2408,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
                   }))
                 ];
               } else if (activeMainModule === 'users') {
-                const pendingCount = users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending').length;
+                const pendingCount = users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending' || u.sellerStatus === 'pending' || u.specialistApplication?.status === 'pending').length;
                 categoryTitle = '👥 ইউজার হাব:';
                 categoryColor = 'text-sky-400';
                 subTabs = [
@@ -2495,7 +2509,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
                         onClick={() => {
                           const perms = getEffectivePermissions();
                           if (perms?.canVerifyPayments) setActiveAdminTab('billing_verify');
-                          else if (perms?.canManageUsers) setActiveAdminTab('users_teacher_seller');
+                          else if (perms?.canManageUsers) setActiveAdminTab('users');
                           else if (perms?.canManageCourses) setActiveAdminTab('courses');
                           else if (perms?.canModerateGigs) setActiveAdminTab('gigs_manage');
                           else setActiveAdminTab('dashboard');
@@ -2523,15 +2537,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ setActiveTab }) => {
                 onCreateBill={handleCreateBillFromCore}
                 onRejectBill={handleRejectBill}
                 onApproveAllMentors={() => {
-                  const pendingUsers = users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending');
+                  const pendingUsers = users.filter(u => u.mentorStatus === 'pending' || u.specialistStatus === 'pending' || u.mentorApplication?.status === 'pending' || u.sellerStatus === 'pending' || u.specialistApplication?.status === 'pending');
                   if (pendingUsers.length === 0) {
                     setOfficeActionMsg('কোনো পেন্ডিং মেন্টর বা স্পেশালিস্ট আবেদন নেই!');
                     setTimeout(() => setOfficeActionMsg(''), 4000);
                     return;
                   }
-                  pendingUsers.forEach(u => approveMentorApplication(u.id));
-                  setOfficeActionMsg(`সফলভাবে ${pendingUsers.length} জন আবেদনকারীকে মেন্টর ও স্পেশালিস্ট হিসেবে অনুমোদন দেওয়া হয়েছে!`);
-                  setTimeout(() => setOfficeActionMsg(''), 4000);
+                  void Promise.all(pendingUsers.map(u => approveMentorApplication(u.id))).then(results => {
+                    const approvedCount = results.filter(Boolean).length;
+                    setOfficeActionMsg(`${approvedCount}/${pendingUsers.length} জন আবেদনকারীর অনুমোদন সংরক্ষিত হয়েছে।`);
+                    setTimeout(() => setOfficeActionMsg(''), 4000);
+                  });
                 }}
               />
             )}

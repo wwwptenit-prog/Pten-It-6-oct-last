@@ -118,7 +118,7 @@ export const DigitalProductFeedCard: React.FC<DigitalProductFeedCardProps> = ({
               </span>
               <span title="Verified Studio">
                 <CheckCircle2
-                  className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#006A4E] fill-[#006A4E] text-white shrink-0"
+                  className="seller-verified-check w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#006A4E] fill-[#006A4E] text-white shrink-0"
                 />
               </span>
             </div>
@@ -393,7 +393,7 @@ export const CourseFeedCard: React.FC<CourseFeedCardProps> = ({
               </span>
               <span title="Verified Academy">
                 <CheckCircle2
-                  className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#006A4E] fill-[#006A4E] text-white shrink-0"
+                  className="seller-verified-check w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#006A4E] fill-[#006A4E] text-white shrink-0"
                 />
               </span>
             </div>

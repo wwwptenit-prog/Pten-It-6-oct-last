@@ -506,7 +506,9 @@ export const CustomerCareDispatcher: React.FC = () => {
         ? `${designated?.name} ব্যস্ত থাকায় মেসেজটি ${assigned.name}-এর কাছে অটো-ট্রান্সফার হয়েছে!`
         : `${newTicket.customerName}-এর নতুন সাপোর্ট মেসেজ এসেছে।`,
       type: isRerouted ? 'warning' : 'info',
-      category: 'system'
+      category: 'system',
+      recipientRole: 'admin',
+      mode: 'all'
     });
   };
 

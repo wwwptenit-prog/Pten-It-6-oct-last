@@ -5,8 +5,10 @@ import compression from 'compression';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
 import nodemailer from 'nodemailer';
+import http from 'http';
 
 const app = express();
+const httpServer = http.createServer(app);
 const PORT = 3000;
 
 // Enable gzip/deflate compression for all requests
@@ -611,7 +613,10 @@ app.get([
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: { server: httpServer },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -633,8 +638,14 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Order Boss server listening on http://0.0.0.0:${PORT}`);
+  httpServer.on('error', (err: any) => {
+    console.error('Server error:', err);
+  });
+
+  httpServer.listen(PORT, '0.0.0.0', () => {
+    console.log(`PTENit server listening on port ${PORT}`);
+    console.log(`  ➜  Local:   http://localhost:${PORT}/`);
+    console.log(`  ➜  Network: http://0.0.0.0:${PORT}/`);
   });
 }
 

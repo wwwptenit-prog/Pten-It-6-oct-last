@@ -434,7 +434,9 @@ PTENit Technologies Ltd.`;
         title: '👥 নতুন এডমিন কর্মকর্তা নিয়োগ',
         message: `${newMember.name}-কে "${newMember.designation}" হিসেবে নিয়োগ প্রদান করা হয়েছে।`,
         type: 'info',
-        category: 'system'
+        category: 'system',
+        recipientRole: 'admin',
+        mode: 'all'
       });
       alert(`সফলভাবে ${newMember.name}-কে পদবী অনুযায়ী এডমিন ক্ষমতা প্রদান করা হয়েছে! পাসওয়ার্ড: ${assignedPassword}`);
     }
